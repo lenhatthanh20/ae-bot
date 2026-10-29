@@ -2,6 +2,8 @@
 
 > Ngày: 2026-10-29 · Phạm vi: v1, dùng cá nhân, chạy demo trước
 
+> **Cập nhật 2026-10-29:** Đã bỏ API mode. Bridge chỉ còn `AI_MODE=cli|fake`; `claude -p` (subscription) là đường chính, chạy với `--safe-mode --tools ""`. Các chỗ nhắc "API key là đường chính" bên dưới đã lỗi thời. Rủi ro điều khoản ở §2.1 vẫn còn nguyên: anh đã chấp nhận.
+
 ---
 
 ## 1. Tóm tắt

@@ -26,13 +26,6 @@ EFFORT = os.environ.get("BRIDGE_EFFORT", "low")
 DAILY_USD_CAP = float(os.environ.get("DAILY_USD_CAP", "3"))
 PORT = int(os.environ.get("PORT", "8000"))
 
-# USD per 1M tokens (input, output), from the 2026-10 price list. Re-check before trusting cost numbers.
-PRICES = {
-    "claude-opus-5-5": (4.0, 20.0),
-    "claude-sonnet-5-5": (2.0, 10.0),
-    "claude-haiku-5-5": (0.10, 0.50),
-}
-
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -82,49 +75,22 @@ def ask_fake(payload):
     return {"action": action, "sl_atr": 1.5, "tp_rr": 2.0, "confidence": 80, "reason": "fake"}, {"usd": 0.0}
 
 
-_client = None
-
-
-def ask_api(payload):
-    global _client
-    import anthropic  # only needed in api mode
-
-    if _client is None:
-        # timeout x (retries + 1) must stay under the EA timeout (60 s)
-        _client = anthropic.Anthropic(timeout=25.0, max_retries=1)
-    # No server-side fallbacks: a refusal must stay NONE, not switch model mid-sample.
-    r = _client.messages.create(
-        model=MODEL,
-        max_tokens=16000,
-        system=PROMPT,
-        messages=[{"role": "user", "content": payload}],
-        output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
-    )
-    pin, pout = PRICES.get(MODEL, (0.0, 0.0))
-    usage = {
-        "in": r.usage.input_tokens,
-        "out": r.usage.output_tokens,
-        "stop": r.stop_reason,
-        "usd": (r.usage.input_tokens * pin + r.usage.output_tokens * pout) / 1e6,
-    }
-    if r.stop_reason != "end_turn":  # refusal or max_tokens -> NONE
-        return None, usage
-    text = next(b.text for b in r.content if b.type == "text")
-    return json.loads(text), usage
-
-
 def ask_cli(payload):
-    # Smoke test only. Still loads ~/.claude (global CLAUDE.md, hooks); --bare would drop the subscription login.
+    # --safe-mode skips CLAUDE.md, hooks, skills, plugins and MCP but keeps the subscription login (--bare does not).
     EMPTY_DIR.mkdir(exist_ok=True)
-    cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--model", MODEL,
+    cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--safe-mode", "--tools", "",
+           "--no-session-persistence", "--model", MODEL, "--effort", EFFORT,
            "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
            "--system-prompt", PROMPT]
+    # 55 s stays under the EA timeout (60 s)
     r = subprocess.run(cmd, input=payload, capture_output=True, text=True, timeout=55, cwd=EMPTY_DIR)
+    if r.returncode:
+        raise RuntimeError(f"claude exit {r.returncode}: {r.stderr[-200:]}")
     out = json.loads(r.stdout)
-    return out.get("structured_output"), {"usd": out.get("total_cost_usd") or 0.0}
+    return out.get("structured_output"), {"usd": out.get("total_cost_usd") or 0.0, "stop": out.get("subtype")}
 
 
-ASKERS = {"fake": ask_fake, "api": ask_api, "cli": ask_cli}
+ASKERS = {"fake": ask_fake, "cli": ask_cli}
 
 
 def log_path(now):

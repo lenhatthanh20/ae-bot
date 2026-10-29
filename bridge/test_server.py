@@ -1,7 +1,9 @@
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 import server
 
@@ -56,6 +58,30 @@ class Decide(unittest.TestCase):
 
     def test_garbage_body_gives_none(self):
         self.assertEqual(server.decide("garbage", ask=server.ask_fake), "NONE;0;0;0;0")
+
+
+class AskCli(unittest.TestCase):
+    def run_with(self, result):
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return result
+        with mock.patch.object(server.subprocess, "run", fake_run):
+            out = server.ask_cli(BODY)
+        return out, calls[0]
+
+    def test_returns_structured_output(self):
+        stdout = json.dumps({"subtype": "success", "total_cost_usd": 0.05,
+                             "structured_output": {"action": "SELL"}})
+        (decision, usage), cmd = self.run_with(subprocess.CompletedProcess([], 0, stdout, ""))
+        self.assertEqual(decision, {"action": "SELL"})
+        self.assertEqual(usage, {"usd": 0.05, "stop": "success"})
+        self.assertIn("--safe-mode", cmd)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+
+    def test_nonzero_exit_raises_with_stderr(self):
+        with self.assertRaisesRegex(RuntimeError, "not logged in"):
+            self.run_with(subprocess.CompletedProcess([], 1, "", "not logged in"))
 
 
 if __name__ == "__main__":

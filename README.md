@@ -4,7 +4,7 @@ MT5 bot for XAUUSD. Claude proposes a trade; the EA checks the risk rules and de
 Full design, review results and rollout gates: [docs/PLAN.md](docs/PLAN.md).
 
 ```
-MT5 EA (mt5/AIGold.mq5) --WebRequest--> bridge/server.py (127.0.0.1:8000) --> Claude API
+MT5 EA (mt5/AIGold.mq5) --WebRequest--> bridge/server.py (127.0.0.1:8000) --> claude -p
         <-- "BUY;1.50;2.00;74;<bar>"  (action; SL in ATR; TP as R:R; confidence; bar echo)
 ```
 
@@ -21,24 +21,23 @@ MT5 EA (mt5/AIGold.mq5) --WebRequest--> bridge/server.py (127.0.0.1:8000) --> Cl
 | `mt5/AIGold.mq5` | Expert Advisor |
 | `mt5/PingTest.mq5` | Phase 0 check: WebRequest + Calendar under Wine |
 | `mt5/ExportM1.mq5` | Exports M1 bars for scoring |
-| `bridge/server.py` | Bridge, `AI_MODE=api\|cli\|fake` |
+| `bridge/server.py` | Bridge, `AI_MODE=cli\|fake` |
 | `bridge/prompt.md` | System prompt |
 | `tools/scoring.py` | Offline scoring of shadow-mode decisions |
 | `tools/compare_models.py` | Same payloads on Haiku/Sonnet/Opus |
-| `run.sh` | Starts the bridge with `caffeinate`, key from Keychain |
+| `run.sh` | Starts the bridge with `caffeinate` |
 
 ## Quick start (macOS)
 
 ```bash
 brew install uv
 uv venv --python 3.12 && uv pip install -r requirements.txt
-security add-generic-password -a "$USER" -s aigold-anthropic -w   # paste the API key
 
 (cd bridge && ../.venv/bin/python -m unittest -v)
 (cd tools && ../.venv/bin/python -m unittest -v)
 
 AI_MODE=fake ./run.sh     # EA tests without tokens
-./run.sh                  # real API
+./run.sh                  # claude -p, subscription login
 touch HALT                # kill switch: bridge answers NONE
 ```
 
