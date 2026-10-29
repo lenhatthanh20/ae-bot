@@ -24,7 +24,7 @@ MODE = os.environ.get("AI_MODE", "fake")
 MODEL = os.environ.get("BRIDGE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("BRIDGE_EFFORT", "low")
 DAILY_USD_CAP = float(os.environ.get("DAILY_USD_CAP", "3"))
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT", "18765"))
 
 SCHEMA = {
     "type": "object",

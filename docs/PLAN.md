@@ -8,7 +8,7 @@
 
 ## 1. Tóm tắt
 
-**Kiến trúc cuối.** Giữ ý gốc: EA MQL5 chạy trong MT5 (bản macOS, chạy trên Wine) gọi `WebRequest` tới một bridge Python stdlib ở `127.0.0.1:8000`. Bridge hỏi Claude qua **API key, đây là đường chính**, rồi trả về đúng một dòng. AI chỉ đề xuất, EA là bên quyết định và đặt lệnh.
+**Kiến trúc cuối.** Giữ ý gốc: EA MQL5 chạy trong MT5 (bản macOS, chạy trên Wine) gọi `WebRequest` tới một bridge Python stdlib ở `127.0.0.1:18765`. Bridge hỏi Claude qua **API key, đây là đường chính**, rồi trả về đúng một dòng. AI chỉ đề xuất, EA là bên quyết định và đặt lệnh.
 
 **Các thay đổi chính so với plan gốc:**
 
@@ -16,7 +16,7 @@
 2. **Đổi cách đánh giá.** Bỏ tiêu chí "có lãi sau 2-4 tuần" vì mẫu đó quá nhỏ để kết luận gì. Thay bằng **shadow mode**: AI được hỏi ở mọi bar hợp lệ, và `scoring.py` chấm điểm offline. Cổng đi live được chốt trước: n ≥ 100, khoảng tin cậy 95% của R trung bình lớn hơn 0, và thắng baseline chọn hướng ngẫu nhiên.
 3. **`claude -p` (dùng subscription) bị hạ xuống chỉ để smoke test.** Lý do: bot chạy liên tục là vùng xám về điều khoản, CLI tải theo cả `~/.claude` của anh, và có báo cáo (nguồn thứ cấp) là CLI dùng một pool credit riêng.
 4. **Thêm các lớp an toàn bắt buộc:** chặn chạy trên tài khoản live, kill switch, mỗi bar chỉ gọi AI một lần (vẫn đúng sau khi khởi động lại), giới hạn lỗ ngày tính theo equity, kill khi drawdown vượt ngưỡng, rủi ro tối đa mỗi lệnh, lọc tin (Calendar), khung giờ tính theo GMT, đóng lệnh theo thời gian và đóng trước cuối tuần.
-5. **Phase 0 là cổng bắt buộc.** Chưa có gì chứng minh `WebRequest` tới `127.0.0.1:8000` chạy được trong Wine trên Mac. Phải test trước khi viết thêm bất cứ thứ gì.
+5. **Phase 0 là cổng bắt buộc.** Chưa có gì chứng minh `WebRequest` tới `127.0.0.1:18765` chạy được trong Wine trên Mac. Phải test trước khi viết thêm bất cứ thứ gì.
 
 ---
 
@@ -31,7 +31,7 @@
 | Chặn | Chưa có bằng chứng công khai nào cho thấy LLM đọc OHLC/EMA/RSI có edge trên XAUUSD | Coi v1 là dự án đo lường. Kết quả "không có edge" cũng là kết quả hợp lệ | risk (dựa trên prior, chưa kiểm chứng) |
 | Lớn | `claude -p` cho bot chạy 24/5: OAuth dành cho "ordinary individual usage", Anthropic có thể enforce mà không báo trước | Đường chính là API key, CLI chỉ để smoke test | ai (code.claude.com/docs/en/legal-and-compliance), stack (nguồn thứ cấp về credit pool, chưa kiểm chứng) |
 | Lớn | `claude -p` tải cả CLAUDE.md, hooks, skills của anh. Còn `--bare` thì không dùng được login subscription | Chạy CLI từ thư mục rỗng, dùng `--system-prompt`, `--json-schema`. Sau Phase 1 thì chuyển sang API | ai (code.claude.com/docs/en/headless) |
-| Lớn | WebRequest tới port 8000 trong Wine chưa được chứng minh. Docs nói port được chọn theo giao thức | Phase 0: script `PingTest`. Nếu fail thì thử port 80 → pf redirect → VPS Windows | mt5, stack (mql5.com/en/docs/network/webrequest) |
+| Lớn | WebRequest tới port 18765 trong Wine chưa được chứng minh. Docs nói port được chọn theo giao thức | Phase 0: script `PingTest`. Nếu fail thì thử port 80 → pf redirect → VPS Windows | mt5, stack (mql5.com/en/docs/network/webrequest) |
 | Lớn | WebRequest chạy đồng bộ (blocking), Claude mất 5-30s | Timeout 60000 ms, mỗi bar gọi một lần. Sau khi có phản hồi, kiểm lại bar và độ trôi giá ≤ 0.3 ATR | mt5, stack, risk (docs) |
 | Lớn | AI trả giá tuyệt đối thì dễ sai số học và dễ dùng giá cũ | AI trả `sl_atr`, `tp_rr`; EA tính giá | ai |
 | Lớn | SL 0.5 ATR quá sát với XAUUSD M15 (cỡ spread × 5-15) | SL 1.0-2.5 ATR, RR 1.5-3, TP ≤ 4 ATR, SL ≥ 6× spread | risk |
@@ -89,7 +89,7 @@
 +-----------------------------------------------------------+     |
                      ^  "BUY;1.50;2.00;74;1767225600"             |
                      |                                            v
-+------------- bridge/server.py 127.0.0.1:8000 -------------------+
++------------- bridge/server.py 127.0.0.1:18765 -------------------+
 | POST /decide : parse -> HALT file? -> USD cap? -> ask Claude     |
 |                -> to_line() -> append logs/decisions-YYYY-MM.jsonl
 | GET /health  : "ok"                                              |
@@ -146,7 +146,7 @@
 |---|---|---|
 | `InpSymbol` | `XAUUSD` | Đúng tên theo broker (vd. `XAUUSD.m`, `GOLD`). EA phải gắn vào chart của symbol này |
 | `InpTimeframe` | `PERIOD_M15` | Chỉ dùng M15 hoặc H1. Không trộn hai khung trong một mẫu đánh giá |
-| `InpUrl` | `http://127.0.0.1:8000/decide` | Phải whitelist `http://127.0.0.1:8000` |
+| `InpUrl` | `http://127.0.0.1:18765/decide` | Phải whitelist `http://127.0.0.1:18765` |
 | `InpTimeoutMs` | `60000` | Lớn hơn timeout của bridge |
 | `InpDryRun` | `true` | `false` chỉ dùng ở Phase 2b (demo) và Phase 5 |
 | `InpAllowLive` | `false` | Trên tài khoản real mà để false thì EA từ chối khởi động |
@@ -178,7 +178,7 @@
 | `BRIDGE_MODEL` | `claude-opus-5-5` | Thay thế được bằng `claude-sonnet-5-5` hoặc `claude-haiku-5-5` |
 | `BRIDGE_EFFORT` | `low` | `low` \| `medium` |
 | `DAILY_USD_CAP` | `3` | Vượt trần thì trả NONE (tính theo ngày UTC) |
-| `PORT` | `8000` | Đổi port thì phải sửa cả `InpUrl` và whitelist |
+| `PORT` | `18765` | Đổi port thì phải sửa cả `InpUrl` và whitelist |
 | `ANTHROPIC_API_KEY` | — | `run.sh` đọc từ Keychain |
 | `CLAUDE_BIN` | `claude` | Đường dẫn tuyệt đối nếu chạy dưới launchd |
 | `FAKE_ACTION` | `BUY` | Chỉ dùng ở fake mode: `BUY` \| `SELL` \| `NONE` |
@@ -253,13 +253,13 @@ ls "$MT5"   # must list Experts, Scripts, Files
 
 1. Cài MT5 macOS từ metatrader5.com. Mở **tài khoản demo của chính broker anh định dùng**. Demo của MetaQuotes có spread không giống thật.
 2. Tìm tên symbol: Market Watch → chuột phải → Symbols → tìm `XAU` / `GOLD`. Ghi lại tên chính xác.
-3. Bật whitelist: **Tools > Options > Expert Advisors** → tick *Allow algorithmic trading* và *Allow WebRequest for listed URL* → thêm `http://127.0.0.1:8000`.
+3. Bật whitelist: **Tools > Options > Expert Advisors** → tick *Allow algorithmic trading* và *Allow WebRequest for listed URL* → thêm `http://127.0.0.1:18765`.
 4. Tạo `mt5/PingTest.mq5`:
 
 ```mql5
 // PingTest.mq5 - Phase 0 gate: WebRequest to the Mac host and Calendar under Wine.
 #property script_show_inputs
-input string InpUrl = "http://127.0.0.1:8000/";
+input string InpUrl = "http://127.0.0.1:18765/";
 
 void OnStart()
 {
@@ -281,7 +281,7 @@ void OnStart()
 5. Chạy server test và deploy script:
 
 ```bash
-cd "$(mktemp -d)" && python3 -m http.server 8000 --bind 127.0.0.1   # leave running
+cd "$(mktemp -d)" && python3 -m http.server 18765 --bind 127.0.0.1   # leave running
 # other pane:
 cp ~/project/ae/aigold/mt5/PingTest.mq5 "$MT5/Scripts/"
 ```
@@ -289,7 +289,7 @@ cp ~/project/ae/aigold/mt5/PingTest.mq5 "$MT5/Scripts/"
 6. Trong MT5, nhấn F4 để mở MetaEditor, mở `PingTest.mq5`, nhấn F7 để compile. Quay lại MT5, kéo script vào chart XAUUSD và xem tab **Experts**.
 7. **Nếu WebRequest fail** (code = -1), làm lần lượt:
    - Err 4014 thường có nghĩa URL chưa có trong whitelist (theo báo cáo trên forum). Kiểm tra lại chính tả, thử bỏ dấu `/` ở cuối.
-   - Err 5200-5203 là lỗi kết nối hoặc timeout. Thử port 80: `python3 -m http.server 80 --bind 127.0.0.1`. macOS bản mới có thể cho bind port < 1024 mà không cần root (chưa kiểm chứng). Nếu bị từ chối: `echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8000" | sudo pfctl -ef -`. Sau đó whitelist `http://127.0.0.1`, đặt `InpUrl=http://127.0.0.1/decide`.
+   - Err 5200-5203 là lỗi kết nối hoặc timeout. Thử port 80: `python3 -m http.server 80 --bind 127.0.0.1`. macOS bản mới có thể cho bind port < 1024 mà không cần root (chưa kiểm chứng). Nếu bị từ chối: `echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 18765" | sudo pfctl -ef -`. Sau đó whitelist `http://127.0.0.1`, đặt `InpUrl=http://127.0.0.1/decide`.
    - Vẫn fail thì chuyển sang VPS Windows chạy cả MT5 và bridge, kiến trúc giữ nguyên. Socket MQL5 hoặc bridge qua file chỉ là phương án cuối.
 8. **API key:** đăng nhập platform.claude.com → tạo workspace `aigold` → tạo key → **đặt spend limit tháng** (vd. $50). Lưu key vào Keychain:
 
@@ -366,7 +366,7 @@ MODE = os.environ.get("AI_MODE", "fake")
 MODEL = os.environ.get("BRIDGE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("BRIDGE_EFFORT", "low")
 DAILY_USD_CAP = float(os.environ.get("DAILY_USD_CAP", "3"))
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT", "18765"))
 
 # USD per 1M tokens (input, output). Re-check current prices before trusting cost numbers.
 PRICES = {
@@ -625,9 +625,9 @@ chmod +x run.sh
 # fake mode (one herdr pane)
 AI_MODE=fake ./run.sh
 # other pane
-curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:18765/health
 printf 'bar=1767225600;sym=XAUUSD;tf=PERIOD_M15;bid=2650.10;ask=2650.40;atr=5.20\ntime,open,high,low,close,ema20,ema50,ema200,rsi14,atr14\n' \
-  | curl -s --data-binary @- -H 'Content-Type: text/plain' http://127.0.0.1:8000/decide
+  | curl -s --data-binary @- -H 'Content-Type: text/plain' http://127.0.0.1:18765/decide
 # expect: BUY;1.50;2.00;80;1767225600
 
 # api mode smoke test (stop the fake one first)
@@ -659,7 +659,7 @@ Chỉ dùng CLI để smoke test: `AI_MODE=cli BRIDGE_MODEL=sonnet ./run.sh`. Ch
 
 input string          InpSymbol          = "XAUUSD";   // exact broker symbol
 input ENUM_TIMEFRAMES InpTimeframe       = PERIOD_M15;
-input string          InpUrl             = "http://127.0.0.1:8000/decide";
+input string          InpUrl             = "http://127.0.0.1:18765/decide";
 input int             InpTimeoutMs       = 60000;
 input bool            InpDryRun          = true;
 input bool            InpAllowLive       = false;
