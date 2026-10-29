@@ -16,8 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent
 PROMPT = (ROOT / "prompt.md").read_text(encoding="utf-8")
 PROMPT_SHA = hashlib.sha256(PROMPT.encode()).hexdigest()[:12]
-LOG_DIR = ROOT.parent / "logs"
-HALT_FILE = ROOT.parent / "HALT"
+LOG_DIR = pathlib.Path(os.environ.get("LOG_DIR", ROOT.parent / "logs"))
+HALT_FILE = pathlib.Path(os.environ.get("HALT_FILE", ROOT.parent / "HALT"))
 EMPTY_DIR = ROOT / "empty"  # cwd for claude -p, so no project CLAUDE.md is loaded
 
 MODE = os.environ.get("AI_MODE", "fake")

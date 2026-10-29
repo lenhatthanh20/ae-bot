@@ -177,7 +177,7 @@
 | `AI_MODE` | `fake` trong code, `api` trong `run.sh` | `api` \| `cli` \| `fake` |
 | `BRIDGE_MODEL` | `claude-opus-5-5` | Thay thế được bằng `claude-sonnet-5-5` hoặc `claude-haiku-5-5` |
 | `BRIDGE_EFFORT` | `low` | `low` \| `medium` |
-| `DAILY_USD_CAP` | `3` | Vượt trần thì trả NONE (tính theo ngày UTC) |
+| `DAILY_USD_CAP` | `3` trong code, `20` trong `run.sh` | Vượt trần thì trả NONE (tính theo ngày UTC). Ở cli mode đây là tiền ước tính |
 | `PORT` | `18765` | Đổi port thì phải sửa cả `InpUrl` và whitelist |
 | `ANTHROPIC_API_KEY` | — | `run.sh` đọc từ Keychain |
 | `CLAUDE_BIN` | `claude` | Đường dẫn tuyệt đối nếu chạy dưới launchd |
