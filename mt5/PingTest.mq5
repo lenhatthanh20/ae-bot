@@ -1,6 +1,6 @@
 // PingTest.mq5 - Phase 0 gate: WebRequest to the Mac host and Calendar under Wine.
 #property script_show_inputs
-input string InpUrl = "http://127.0.0.1:8000/health";
+input string InpUrl = "http://127.0.0.1:18765/health";
 
 void OnStart()
 {

@@ -4,7 +4,7 @@ MT5 bot for XAUUSD. Claude proposes a trade; the EA checks the risk rules and de
 Full design, review results and rollout gates: [docs/PLAN.md](docs/PLAN.md).
 
 ```
-MT5 EA (mt5/AIGold.mq5) --WebRequest--> bridge/server.py (127.0.0.1:8000) --> claude -p
+MT5 EA (mt5/AIGold.mq5) --WebRequest--> bridge/server.py (127.0.0.1:18765) --> claude -p
         <-- "BUY;1.50;2.00;74;<bar>"  (action; SL in ATR; TP as R:R; confidence; bar echo)
 ```
 
@@ -42,7 +42,7 @@ touch HALT                # kill switch: bridge answers NONE
 ```
 
 MT5 side:
-1. Tools > Options > Expert Advisors: allow algo trading, allow WebRequest for `http://127.0.0.1:8000`.
+1. Tools > Options > Expert Advisors: allow algo trading, allow WebRequest for `http://127.0.0.1:18765`.
 2. Copy `mt5/*.mq5` into `MQL5/Experts` (EA) and `MQL5/Scripts` (PingTest, ExportM1).
    Path: File > Open Data Folder.
 3. Compile in MetaEditor (F7), run `PingTest` first, then attach `AIGold` to an XAUUSD M15 chart.

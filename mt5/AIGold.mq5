@@ -6,7 +6,7 @@
 
 input string          InpSymbol          = "XAUUSD";   // exact broker symbol
 input ENUM_TIMEFRAMES InpTimeframe       = PERIOD_M15;
-input string          InpUrl             = "http://127.0.0.1:8000/decide";
+input string          InpUrl             = "http://127.0.0.1:18765/decide";
 input int             InpTimeoutMs       = 60000;
 input bool            InpDryRun          = true;
 input bool            InpAllowLive       = false;
