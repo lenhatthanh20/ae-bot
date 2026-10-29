@@ -16,3 +16,5 @@ jobs:
       - run: python -m unittest -v
         working-directory: tools
       - run: python -m py_compile tools/compare_models.py
+      - run: shellcheck scripts/*.sh
+      - run: python -m venv .venv && scripts/smoke.sh fake

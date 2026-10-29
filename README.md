@@ -41,6 +41,18 @@ AI_MODE=fake ./run.sh     # EA tests without tokens
 touch HALT                # kill switch: bridge answers NONE
 ```
 
+## Scripts
+
+| Script | What |
+|---|---|
+| `scripts/setup.sh` | uv venv + `claude auth status` |
+| `scripts/smoke.sh fake` | Bridge end to end, no tokens (also runs in CI) |
+| `scripts/smoke.sh cli` | One real `claude -p` call: checks structured output, latency, HALT |
+| `scripts/deploy-mt5.sh` | Copies `mt5/*.mq5` into the MT5 data folder; compile with F7 after |
+| `scripts/score.sh [symbol]` | `tools/scoring.py` on `logs/` with the M1 file from `ExportM1` |
+
+`smoke.sh` uses its own port (18766), log dir and HALT file, so it can run next to a live bridge.
+
 MT5 side:
 1. Tools > Options > Expert Advisors: allow algo trading, allow WebRequest for `http://127.0.0.1:18765`.
 2. Copy `mt5/*.mq5` into `MQL5/Experts` (EA) and `MQL5/Scripts` (PingTest, ExportM1).
