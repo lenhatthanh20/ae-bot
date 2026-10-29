@@ -1,0 +1,5 @@
+logs/
+HALT
+.venv/
+bridge/empty/
+__pycache__/
