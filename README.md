@@ -24,9 +24,12 @@ Windows: MT5 + mt5/AIGold.mq5 --WebRequest (LAN)--> Mac: bridge/server.py (<mac-
 | `mt5/AIGold.mq5` | Expert Advisor |
 | `mt5/PingTest.mq5` | Phase 0 check: WebRequest from Windows to the Mac bridge + Calendar |
 | `mt5/ExportM1.mq5` | Exports M1 bars for scoring |
+| `mt5/ExportDeals.mq5` | Exports closed positions of the EA magic (with SL/TP/EXPERT close reason) for stats |
 | `bridge/server.py` | Bridge, `AI_MODE=cli\|fake` |
 | `bridge/prompt.md` | System prompt |
 | `tools/scoring.py` | Offline scoring of shadow-mode decisions |
+| `tools/stats.py` | Statistics report: prompts, decisions, EA funnel, real and shadow results, loss analysis |
+| `tools/stats_report.html` | HTML template for `stats.py --html` |
 | `tools/compare_models.py` | Same payloads on Haiku/Sonnet/Opus |
 | `run.sh` | Starts the bridge with `caffeinate` |
 
@@ -95,6 +98,15 @@ Windows:
 | `scripts/smoke.sh cli` | One real `claude -p` call: checks structured output, latency, HALT |
 | `scripts/deploy-mt5.sh` | Copies `mt5/*.mq5` into `$MT5_MQL5` (required); compile with F7 after |
 | `scripts/score.sh [symbol]` | `tools/scoring.py` on `logs/` with `$MT5_MQL5/Files/m1_<symbol>.csv` from `ExportM1` |
+| `scripts/stats.sh [args]` | `tools/stats.py` on `logs/` and `$MT5_MQL5/Files` (events log, `deals_<symbol>.csv`, `m1_<symbol>.csv`); `SYMBOL` env, default `XAUUSD` |
+
+`stats.sh` examples: `--html` (writes `local/stats-<date>.html` and opens it), `--json out.json`,
+`--since 2026-11-01 --until 2026-11-30`, `--setup <prompt_sha>` (default: latest prompt/model), `--setup all`.
+Missing input files only hide their sections. The funnel needs the EA events log
+(`MQL5/Files/aigold_events_<magic>.csv`, written by the EA since this version; older bars are not in it).
+
+Run `ExportM1` and `ExportDeals` at least once a week: the broker keeps M1 bars only for a limited time,
+and a shadow signal without M1 data can never be scored.
 
 `smoke.sh` uses its own port (18766), log dir and HALT file, so it can run next to a live bridge.
 
@@ -148,6 +160,7 @@ Stay on demo until the gate passes.
   `HALT` gives NONE.
 - **Phase 2a, EA dry run with `AI_MODE=fake`:** EA prints `DRYRUN`; with the bridge stopped it prints `BRIDGE_ERR`
   and places no order.
+- **Stats (Phase 2b onward):** `scripts/stats.sh --html` after `ExportDeals` and `ExportM1`, at least weekly.
 - **Phase 2b, demo orders with `AI_MODE=fake` (3-5 days):** `InpDryRun=false`. Expect orders with SL/TP from the start,
   `SKIP POSITION`, `TIME_EXIT` after 12 bars, `SKIP TRADES_DAY` after 5 trades, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
   Friday close. Restart MT5 mid-bar: no second order in the same bar. Record slippage and every retcode other than 10009.

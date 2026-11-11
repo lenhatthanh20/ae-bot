@@ -6,4 +6,4 @@ MQL5="${MT5_MQL5:-}"
 [ -n "$MQL5" ] || { echo "MT5_MQL5 is not set: point it at the Windows MQL5 folder mounted over SMB"; exit 1; }
 [ -d "$MQL5" ] || { echo "MT5_MQL5 is not a folder: $MQL5"; exit 1; }
 cp -v mt5/AIGold.mq5 "$MQL5/Experts/"
-cp -v mt5/PingTest.mq5 mt5/ExportM1.mq5 "$MQL5/Scripts/"
+cp -v mt5/PingTest.mq5 mt5/ExportM1.mq5 mt5/ExportDeals.mq5 "$MQL5/Scripts/"

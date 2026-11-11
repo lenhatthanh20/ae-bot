@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIGold Stats</title>
+<style>
+:root {
+  --bg: #f7f7f5; --card: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #e3e3e0;
+  --c1: #2f6fde; --c2: #d9822b; --c3: #8a8a8f; --good: #1f9d55; --bad: #d64545; --warn-bg: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416; --card: #1e1e21; --fg: #ececee; --muted: #9a9aa0; --line: #2e2e33;
+    --c1: #6b9cff; --c2: #f0a35e; --c3: #8f8f96; --good: #4cc38a; --bad: #ff6b6b; --warn-bg: #3a3218;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416; --card: #1e1e21; --fg: #ececee; --muted: #9a9aa0; --line: #2e2e33;
+  --c1: #6b9cff; --c2: #f0a35e; --c3: #8f8f96; --good: #4cc38a; --bad: #ff6b6b; --warn-bg: #3a3218;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 22px; margin: 8px 0 4px; }
+h2 { font-size: 17px; margin: 28px 0 10px; }
+h3 { font-size: 14px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+.muted { color: var(--muted); }
+.warn { background: var(--warn-bg); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.tile .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .k { color: var(--muted); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.chart { position: relative; height: 240px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.reason { min-width: 240px; }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+@media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script type="application/json" id="report">/*REPORT*/</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+"use strict";
+const R = JSON.parse(document.getElementById("report").textContent);
+const app = document.getElementById("app");
+const css = getComputedStyle(document.documentElement);
+const C = k => css.getPropertyValue("--" + k).trim();
+
+// Every string goes in as text (textContent), never as HTML.
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  return e;
+}
+function add(parent, ...kids) { kids.forEach(k => k && parent.appendChild(k)); return parent; }
+const put = (parent, child) => parent.appendChild(child);
+const fmt = (x, d = 2, sign = false) => x === null || x === undefined ? "-" :
+  (sign && x > 0 ? "+" : "") + Number(x).toFixed(d);
+const pc = x => x === null || x === undefined ? "-" : Math.round(x * 100) + "%";
+
+function section(title, note) {
+  const s = put(app, el("section"));
+  add(s, el("h2", "", title));
+  if (note) add(s, el("p", "muted", note));
+  return s;
+}
+function table(parent, head, rows, cls = {}) {
+  const t = el("table"), tr = el("tr");
+  head.forEach(h => add(tr, el("th", "", h)));
+  add(t, add(el("thead"), tr));
+  const tb = put(t, el("tbody"));
+  rows.forEach(r => {
+    const row = el("tr");
+    r.forEach((v, i) => {
+      const td = el("td", cls[i] || "", v);
+      if (typeof v === "string" && /^[+-]\d/.test(v)) td.classList.add(v[0] === "+" ? "pos" : "neg");
+      add(row, td);
+    });
+    add(tb, row);
+  });
+  return add(parent, add(el("div", "scroll"), t));
+}
+function card(parent, title) {
+  const c = put(parent, el("div", "card"));
+  if (title) add(c, el("h3", "", title));
+  return c;
+}
+function chart(parent, title, config) {
+  const c = card(parent, title);
+  if (!window.Chart) { add(c, el("p", "muted", "Chart not shown: Chart.js did not load (offline?).")); return; }
+  const box = el("div", "chart"), cv = el("canvas");
+  add(c, add(box, cv));
+  config.options = Object.assign({ responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { labels: { color: C("fg") } } },
+    scales: config.type === "doughnut" ? {} : {
+      x: { ticks: { color: C("muted") }, grid: { color: C("line") }, stacked: !!config.stacked },
+      y: { ticks: { color: C("muted") }, grid: { color: C("line") }, stacked: !!config.stacked } } },
+    config.options || {});
+  new Chart(cv, config);
+}
+const bars = (labels, sets, extra = {}) => Object.assign({ type: "bar",
+  data: { labels, datasets: sets.map(([label, data, color]) => ({ label, data, backgroundColor: color })) } }, extra);
+const entries = o => Object.entries(o || {});
+
+// Header
+add(app, el("h1", "", "AIGold statistics"));
+const rg = R.range;
+add(app, el("p", "muted", `Setup ${R.setup.id || "-"} · days ${rg.first || "-"} … ${rg.last || "-"}` +
+  (rg.since || rg.until ? ` · filter ${rg.since || "…"} → ${rg.until || "…"}` : "") + ` · generated ${R.generated}`));
+const used = ["logs: " + R.inputs.logs.join(", ")];
+if (R.inputs.m1) used.push("m1: " + R.inputs.m1);
+if (R.inputs.deals) used.push("deals: " + R.inputs.deals);
+if (R.inputs.events.length) used.push("events: " + R.inputs.events.join(", "));
+add(app, el("p", "muted", "Inputs · " + used.join(" · ")));
+if (R.inputs.missing.length)
+  add(app, el("div", "warn", "Missing inputs (their sections are hidden): " + R.inputs.missing.join(", ")));
+if (R.setup.warning) add(app, el("div", "warn", "WARNING: " + R.setup.warning));
+
+// Overview
+const main = R.real && R.real.n ? R.real : R.shadow;
+const src = main === R.real ? "real" : "shadow";
+const tiles = put(section("Overview"), el("div", "tiles"));
+[["AI calls", R.prompts.calls], ["Cost", "$" + fmt(R.prompts.cost)],
+ ["Trades (" + src + ")", main ? main.n : "-"], ["Win rate", main ? pc(main.win) : "-"],
+ ["Mean R", main ? fmt(main.mean, 3, true) : "-"], ["Max DD", main ? fmt(main.max_dd, 1) + "R" : "-"]]
+  .forEach(([k, v]) => add(tiles, add(el("div", "tile"), el("div", "v", v), el("div", "k", k))));
+
+// Setups
+const tr = s => s ? [s.n, pc(s.win), fmt(s.mean, 3, true)] : ["-", "-", "-"];
+table(section("Setups", "One row per prompt_sha/model. Detail sections below use the setup in the header."),
+  ["Setup", "First", "Last", "Calls", "Signals", "Shadow n", "win", "mean R", "Real n", "win", "mean R"],
+  R.setups.map(s => [s.id, s.first, s.last, s.calls, s.signals, ...tr(s.shadow), ...tr(s.real)]));
+
+// Prompts
+const P = R.prompts, ps = section("Prompts", "All setups. Latency covers real AI calls (not HALT/USD_CAP stops).");
+add(ps, el("p", "", `Calls ${P.calls} · cost $${fmt(P.cost)} · errors: ` +
+  entries(P.errors).map(([k, v]) => `${k} ${v}`).join(", ") +
+  ` · latency p50 ${fmt(P.latency.p50, 0)} ms, p95 ${fmt(P.latency.p95, 0)} ms, max ${fmt(P.latency.max, 0)} ms`));
+const pg = put(ps, el("div", "grid"));
+const days = P.per_day.map(d => d.day);
+chart(pg, "Calls per day", bars(days, [["calls", P.per_day.map(d => d.calls - d.errors), C("c1")],
+  ["errors", P.per_day.map(d => d.errors), C("bad")]], { stacked: true }));
+chart(pg, "Cost per day (USD)", bars(days, [["cost", P.per_day.map(d => +d.cost.toFixed(3)), C("c2")]]));
+table(card(pg, "By source"), ["Mode", "Model", "Prompt", "Calls"],
+  P.by_source.map(s => [s.mode, s.model, s.prompt_sha, s.calls]));
+
+// Decisions
+const D = R.decisions, ds = section("Decisions", "Selected setup, error records left out.");
+add(ds, el("p", "", entries(D.total).map(([k, v]) => `${k} ${v} (${pc(D.pct[k] || 0)})`).join(" · ")));
+const dg = put(ds, el("div", "grid"));
+chart(dg, "Decisions per day", bars(D.per_day.map(d => d.day),
+  [["BUY", D.per_day.map(d => d.BUY), C("good")], ["SELL", D.per_day.map(d => d.SELL), C("bad")],
+   ["NONE", D.per_day.map(d => d.NONE), C("c3")]], { stacked: true }));
+chart(dg, "Confidence of BUY/SELL", bars(Object.keys(D.conf_buckets).map(k => k + "+"),
+  [["signals", Object.values(D.conf_buckets), C("c1")]]));
+
+// Funnel
+if (R.funnel) {
+  const F = R.funnel, fs = section("Funnel", "From the EA events log. AI signals = reject + skip after AI + dry run + orders.");
+  const rows = [["Bars handled", F.bars, "c3"],
+    ...entries(F.skip_before_ai).map(([k, v]) => ["Skip " + k, v, "c3"]),
+    ["Bridge error", F.bridge_err, "bad"], ["AI NONE", F.ai_none, "c3"], ["AI BUY/SELL", F.ai_signals, "c1"],
+    ...entries(F.reject).map(([k, v]) => ["Reject " + k, v, "c2"]),
+    ...entries(F.skip_after_ai).map(([k, v]) => ["Skip " + k, v, "c2"]),
+    ["Dry run", F.dryrun, "good"], ["Order ok", F.order_ok, "good"], ["Order fail", F.order_fail, "bad"]];
+  const fg = put(fs, el("div", "grid"));
+  chart(fg, "Bars → outcome", { type: "bar", data: { labels: rows.map(r => r[0]),
+    datasets: [{ label: "bars", data: rows.map(r => r[1]), backgroundColor: rows.map(r => C(r[2])) }] },
+    options: { indexAxis: "y", plugins: { legend: { display: false } } } });
+  table(card(fg, "Counts"), ["Step", "Count"], rows.map(r => [r[0], r[1]])
+    .concat([["Time exit", F.time_exit], ["Close fail", F.close_fail]]));
+}
+
+// Results, breakdown and losses per source
+function results(name, S, note) {
+  const s = section("Results: " + name, note);
+  const g = put(s, el("div", "grid"));
+  const idx = S.equity.map((_, i) => i + 1);
+  chart(g, "Equity (cumulative R) and drawdown", { type: "line", data: { labels: idx, datasets: [
+    { label: "equity R", data: S.equity, borderColor: C("c1"), pointRadius: 0, tension: 0 },
+    { label: "drawdown R", data: S.drawdown, borderColor: C("bad"), backgroundColor: C("bad") + "33",
+      fill: "origin", pointRadius: 0, tension: 0 }] } });
+  const bins = {};
+  S.r.forEach(x => { const b = Math.floor(x * 2) / 2; bins[b] = (bins[b] || 0) + 1; });
+  const keys = Object.keys(bins).map(Number).sort((a, b) => a - b);
+  chart(g, "R per trade (0.5R bins)", { type: "bar", data: { labels: keys.map(k => fmt(k, 1, true)),
+    datasets: [{ label: "trades", data: keys.map(k => bins[k]), backgroundColor: keys.map(k => k < 0 ? C("bad") : C("good")) }] },
+    options: { plugins: { legend: { display: false } } } });
+  table(card(g, "Metrics"), ["Metric", "Value"], [["Trades", S.n], ["Win rate", pc(S.win)],
+    ["Mean R", fmt(S.mean, 3, true)], ["Total R", fmt(S.total, 1, true)], ["Profit factor", fmt(S.pf)],
+    ["Avg win", fmt(S.avg_win, 2, true)], ["Avg loss", fmt(S.avg_loss, 2, true)], ["Max DD", fmt(S.max_dd, 1) + "R"],
+    ["Longest losing streak", S.max_loss_streak]].concat(S.unscored !== undefined ? [["Not scored (no M1 data)", S.unscored]] : []));
+
+  add(s, el("h3", "", "Breakdown"));
+  const bg = put(s, el("div", "grid"));
+  [["hour", "GMT hour"], ["weekday", "Weekday (GMT)"], ["side", "Side"], ["conf", "Confidence"]].forEach(([k, t]) => {
+    const rows = S.by[k];
+    chart(bg, t + ": win rate and mean R", { type: "bar", data: { labels: rows.map(r => k === "conf" ? r.key + "+" : r.key),
+      datasets: [{ label: "win %", data: rows.map(r => Math.round(r.win * 100)), backgroundColor: C("c1"), yAxisID: "y" },
+                 { label: "mean R", data: rows.map(r => +r.mean.toFixed(3)), backgroundColor: C("c2"), yAxisID: "y1" }] },
+      options: { scales: { y: { position: "left", ticks: { color: C("muted") }, grid: { color: C("line") } },
+        y1: { position: "right", ticks: { color: C("muted") }, grid: { display: false } },
+        x: { ticks: { color: C("muted") }, grid: { color: C("line") } } } } });
+  });
+  const tbl = [];
+  ["hour", "weekday", "side", "conf"].forEach(k => S.by[k].forEach(r => tbl.push([k, r.key, r.n, pc(r.win), fmt(r.mean, 3, true)])));
+  table(card(bg, "Breakdown table"), ["By", "Key", "n", "Win", "Mean R"], tbl);
+
+  const L = S.losses;
+  add(s, el("h3", "", `Losses (${L.n})`));
+  const lg = put(s, el("div", "grid"));
+  chart(lg, "Losses by exit type", bars(Object.keys(L.by_exit), [["losses", Object.values(L.by_exit), C("bad")]]));
+  const ex = { never_in_profit: "never reached +0.5R", gave_back: "reached +0.5R, then lost", unknown: "no M1 data" };
+  chart(lg, "Open profit before the loss", bars(Object.keys(L.excursion).map(k => ex[k] || k),
+    [["losses", Object.values(L.excursion), C("c2")]]));
+  table(card(lg, "Losses by side / GMT hour / confidence"), ["By", "Key", "Losses"],
+    [...entries(L.by_side).map(([k, v]) => ["side", k, v]), ...entries(L.by_hour).map(([k, v]) => ["hour", k, v]),
+     ...entries(L.by_conf).map(([k, v]) => ["conf", k + "+", v])]);
+  add(s, el("h3", "", "Worst 10 losses, with the AI reason"));
+  table(s, ["Time (UTC)", "Side", "Conf", "SL ATR", "RR", "Exit", "R", "Best R", "AI reason"],
+    L.worst.map(w => [w.ts.slice(0, 16).replace("T", " "), w.side, w.conf, w.sl_atr, w.tp_rr, w.exit,
+      fmt(w.r, 2, true), fmt(w.mfe, 2), w.reason]), { 8: "reason" });
+  if (S.unmatched && S.unmatched.length) {
+    add(s, el("h3", "", `Positions without a bridge record (${S.unmatched.length})`));
+    table(s, ["Position", "Open (server)", "Side", "Profit", "Why"], S.unmatched.map(u =>
+      [u.position, new Date(u.open_time * 1000).toISOString().slice(0, 16).replace("T", " "), u.side, fmt(u.profit, 2, true), u.why]));
+  }
+}
+if (R.real) results("real (demo/live)", R.real, "Closed positions from ExportDeals, joined to the AI decision of their M5 bar.");
+if (R.shadow) results("shadow (dry run)", R.shadow, "Simulated on M1 bars with the EA rules, same as scoring.py.");
+</script>
+</body>
+</html>
