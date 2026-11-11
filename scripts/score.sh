@@ -3,5 +3,7 @@
 # Usage: scripts/score.sh [symbol]   (default XAUUSD)
 set -eu
 cd "$(dirname "$0")/.."
-MQL5="${MT5_MQL5:-$HOME/Library/Application Support/net.metaquotes.wine.metatrader5/drive_c/Program Files/MetaTrader 5/MQL5}"
+MQL5="${MT5_MQL5:-}"
+[ -n "$MQL5" ] || { echo "MT5_MQL5 is not set: point it at the Windows MQL5 folder mounted over SMB"; exit 1; }
+[ -d "$MQL5" ] || { echo "MT5_MQL5 is not a folder: $MQL5"; exit 1; }
 exec .venv/bin/python tools/scoring.py --m1 "$MQL5/Files/m1_${1:-XAUUSD}.csv" logs/decisions-*.jsonl

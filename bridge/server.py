@@ -25,6 +25,7 @@ MODEL = os.environ.get("BRIDGE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("BRIDGE_EFFORT", "low")
 DAILY_USD_CAP = float(os.environ.get("DAILY_USD_CAP", "3"))
 PORT = int(os.environ.get("PORT", "18765"))
+BRIDGE_HOST = os.environ.get("BRIDGE_HOST", "127.0.0.1")
 
 SCHEMA = {
     "type": "object",
@@ -38,6 +39,17 @@ SCHEMA = {
     "required": ["action", "sl_atr", "tp_rr", "confidence", "reason"],
     "additionalProperties": False,
 }
+
+
+def parse_ips(text):
+    return {ip.strip() for ip in text.split(",") if ip.strip()}
+
+
+ALLOW_IPS = parse_ips(os.environ.get("ALLOW_IPS", "127.0.0.1"))
+
+
+def client_allowed(ip):
+    return ip in ALLOW_IPS
 
 
 def parse_request(body):
@@ -136,13 +148,25 @@ def decide(body, ask=None):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _rejected(self):
+        ip = self.client_address[0]
+        if client_allowed(ip):
+            return False
+        print(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} REJECT {ip} {self.command} {self.path}", flush=True)
+        self._send(403, "forbidden")
+        return True
+
     def do_GET(self):
+        if self._rejected():
+            return
         if self.path == "/health":
             self._send(200, "ok")
         else:
             self._send(404, "not found")
 
     def do_POST(self):
+        if self._rejected():
+            return
         if self.path != "/decide":
             return self._send(404, "not found")
         size = int(self.headers.get("Content-Length", 0))
@@ -162,5 +186,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"bridge 127.0.0.1:{PORT} mode={MODE} model={MODEL} effort={EFFORT} prompt={PROMPT_SHA}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    print(f"bridge {BRIDGE_HOST}:{PORT} allow={','.join(sorted(ALLOW_IPS))} "
+          f"mode={MODE} model={MODEL} effort={EFFORT} prompt={PROMPT_SHA}")
+    ThreadingHTTPServer((BRIDGE_HOST, PORT), Handler).serve_forever()

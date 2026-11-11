@@ -1,4 +1,5 @@
-// PingTest.mq5 - Phase 0 gate: WebRequest to the Mac host and Calendar under Wine.
+// PingTest.mq5 - Phase 0 gate: WebRequest from Windows MT5 to the Mac bridge over the LAN, and Calendar.
+// Set InpUrl=http://<mac-ip>:18765/health when you run it.
 #property script_show_inputs
 input string InpUrl = "http://127.0.0.1:18765/health";
 
