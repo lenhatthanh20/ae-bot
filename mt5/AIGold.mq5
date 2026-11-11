@@ -95,35 +95,53 @@ void OnTick()
    if(bar == 0 || (datetime)(long)GlobalVariableGet(g_gvBar) == bar) return;
    GlobalVariableSet(g_gvBar, (double)bar);   // mark first: one AI call per bar, even after a restart
    GlobalVariablesFlush();
-   if(TimeCurrent() - bar > 60) { Print("SKIP LATE_BAR"); return; }   // attached or woke up mid-bar
+   if(TimeCurrent() - bar > 60) { Print("SKIP LATE_BAR"); LogEvent(bar, "SKIP", "LATE_BAR"); return; }   // attached or woke up mid-bar
 
    string why = PreCheck();
-   if(why != "") { PrintFormat("SKIP %s", why); return; }
+   if(why != "") { PrintFormat("SKIP %s", why); LogEvent(bar, "SKIP", why); return; }
 
    double bid = SymbolInfoDouble(g_sym, SYMBOL_BID), ask = SymbolInfoDouble(g_sym, SYMBOL_ASK);
    double atr = 0;
    string body = BuildBody(bar, bid, ask, atr);
-   if(body == "" || atr <= 0) { Print("SKIP NO_DATA"); return; }
+   if(body == "" || atr <= 0) { Print("SKIP NO_DATA"); LogEvent(bar, "SKIP", "NO_DATA"); return; }
 
    string resp;
-   if(!Post(body, resp)) return;   // any bridge failure = no trade
+   if(!Post(bar, body, resp)) return;   // any bridge failure = no trade
 
    string p[];
    if(StringSplit(resp, ';', p) != 5 || (datetime)StringToInteger(p[4]) != bar)
-   { PrintFormat("SKIP BAD_RESP '%s'", resp); return; }
+   { PrintFormat("SKIP BAD_RESP '%s'", resp); LogEvent(bar, "SKIP", "BAD_RESP"); return; }
    string act = p[0];
-   if(act != "BUY" && act != "SELL") { PrintFormat("AI NONE bar=%s", TimeToString(bar)); return; }
+   if(act != "BUY" && act != "SELL") { PrintFormat("AI NONE bar=%s", TimeToString(bar)); LogEvent(bar, "AI_NONE", ""); return; }
 
    // the AI call may have taken up to 60 s: re-check the world
-   if(iTime(g_sym, InpTimeframe, 0) != bar) { Print("SKIP BAR_CHANGED"); return; }
+   if(iTime(g_sym, InpTimeframe, 0) != bar) { Print("SKIP BAR_CHANGED"); LogEvent(bar, "SKIP", "BAR_CHANGED"); return; }
    double bid2 = SymbolInfoDouble(g_sym, SYMBOL_BID), ask2 = SymbolInfoDouble(g_sym, SYMBOL_ASK);
-   if(MathAbs((bid2 + ask2) - (bid + ask)) / 2.0 > InpMaxDriftAtr * atr) { Print("SKIP DRIFT"); return; }
+   if(MathAbs((bid2 + ask2) - (bid + ask)) / 2.0 > InpMaxDriftAtr * atr) { Print("SKIP DRIFT"); LogEvent(bar, "SKIP", "DRIFT"); return; }
 
    double sl = 0, tp = 0, lots = 0;
    int conf = (int)StringToInteger(p[3]);
    why = Validate(act, StringToDouble(p[1]), StringToDouble(p[2]), conf, atr, bid2, ask2, sl, tp, lots);
-   if(why != "") { PrintFormat("REJECT %s %s conf=%d", act, why, conf); return; }
-   Execute(act, lots, sl, tp, conf);
+   if(why != "")
+   {
+      PrintFormat("REJECT %s %s conf=%d", act, why, conf);
+      LogEvent(bar, "REJECT", StringFormat("%s %s conf=%d", why, act, conf));
+      return;
+   }
+   Execute(bar, act, lots, sl, tp, conf);
+}
+
+// One CSV row per outcome, for tools/stats.py. Detail must not hold commas.
+// FILE_SHARE_READ: the Mac reads the file over SMB while MT5 runs.
+void LogEvent(datetime bar, const string ev, const string detail)
+{
+   int f = FileOpen("aigold_events_" + IntegerToString(InpMagic) + ".csv",
+                    FILE_READ | FILE_WRITE | FILE_SHARE_READ | FILE_CSV | FILE_ANSI, ',');
+   if(f == INVALID_HANDLE) { PrintFormat("event log FileOpen failed err=%d", GetLastError()); return; }
+   if(FileSize(f) == 0) FileWrite(f, "time", "bar", "event", "detail");
+   FileSeek(f, 0, SEEK_END);
+   FileWrite(f, (long)TimeCurrent(), (long)bar, ev, detail);
+   FileClose(f);
 }
 
 string PreCheck()
@@ -242,7 +260,7 @@ string BuildBody(datetime bar, double bid, double ask, double &atrLast)
    return s + m15 + h1;
 }
 
-bool Post(const string body, string &resp)
+bool Post(datetime bar, const string body, string &resp)
 {
    char data[], res[];
    string rh;
@@ -250,7 +268,13 @@ bool Post(const string body, string &resp)
    if(n > 0) ArrayResize(data, n - 1);   // drop the trailing NUL
    ResetLastError();
    int code = WebRequest("POST", InpUrl, "Content-Type: text/plain\r\n", InpTimeoutMs, data, res, rh);
-   if(code != 200) { PrintFormat("BRIDGE_ERR http=%d err=%d", code, GetLastError()); return false; }
+   if(code != 200)
+   {
+      int err = GetLastError();
+      PrintFormat("BRIDGE_ERR http=%d err=%d", code, err);
+      LogEvent(bar, "BRIDGE_ERR", StringFormat("http=%d err=%d", code, err));
+      return false;
+   }
    resp = CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8);
    StringTrimLeft(resp);
    StringTrimRight(resp);
@@ -302,13 +326,14 @@ string Validate(const string act, double slAtr, double rr, int conf, double atr,
    return "";
 }
 
-void Execute(const string act, double lots, double sl, double tp, int conf)
+void Execute(datetime bar, const string act, double lots, double sl, double tp, int conf)
 {
    int d = (int)SymbolInfoInteger(g_sym, SYMBOL_DIGITS);
    if(InpDryRun)
    {
       PrintFormat("DRYRUN %s lots=%.2f sl=%s tp=%s conf=%d", act, lots,
                   DoubleToString(sl, d), DoubleToString(tp, d), conf);
+      LogEvent(bar, "DRYRUN", StringFormat("%s conf=%d", act, conf));
       return;
    }
    bool ok = (act == "BUY") ? trade.Buy(lots, g_sym, 0.0, sl, tp, "AIGold")
@@ -318,7 +343,10 @@ void Execute(const string act, double lots, double sl, double tp, int conf)
                act, ok ? "true" : "false", rc, trade.ResultRetcodeDescription(),
                DoubleToString(trade.RequestPrice(), d), DoubleToString(trade.ResultPrice(), d),
                DoubleToString(sl, d), DoubleToString(tp, d));
-   if(!ok || (rc != TRADE_RETCODE_DONE && rc != TRADE_RETCODE_PLACED))
+   bool done = ok && (rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_PLACED);
+   LogEvent(bar, "ORDER", StringFormat("%s %s rc=%u fill=%s conf=%d", done ? "ok" : "fail", act, rc,
+                                       DoubleToString(trade.ResultPrice(), d), conf));
+   if(!done)
       Print("ORDER_FAIL: no retry, next chance is the next bar");
 }
 
@@ -335,10 +363,18 @@ void ManagePosition()
       int held = iBarShift(g_sym, InpTimeframe, (datetime)PositionGetInteger(POSITION_TIME));
       if(held >= InpMaxHoldBars || fridayClose)
       {
+         datetime bar = iTime(g_sym, InpTimeframe, 0);
          if(!trade.PositionClose(t))
+         {
             PrintFormat("CLOSE_FAIL ticket=%I64u rc=%u", t, trade.ResultRetcode());
+            LogEvent(bar, "CLOSE_FAIL", StringFormat("ticket=%I64u rc=%u", t, trade.ResultRetcode()));
+         }
          else
-            PrintFormat("TIME_EXIT ticket=%I64u held=%d bars friday=%s", t, held, fridayClose ? "true" : "false");
+         {
+            string detail = StringFormat("ticket=%I64u held=%d friday=%s", t, held, fridayClose ? "true" : "false");
+            PrintFormat("TIME_EXIT %s", detail);
+            LogEvent(bar, "TIME_EXIT", detail);
+         }
       }
    }
 }
