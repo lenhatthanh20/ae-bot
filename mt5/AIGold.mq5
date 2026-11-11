@@ -5,7 +5,7 @@
 #include <Trade/Trade.mqh>
 
 input string          InpSymbol          = "XAUUSD";   // exact broker symbol
-input ENUM_TIMEFRAMES InpTimeframe       = PERIOD_M15;
+input ENUM_TIMEFRAMES InpTimeframe       = PERIOD_M5;
 input string          InpUrl             = "http://127.0.0.1:18765/decide";
 input int             InpTimeoutMs       = 60000;
 input bool            InpDryRun          = true;
@@ -13,27 +13,27 @@ input bool            InpAllowLive       = false;
 input long            InpMagic           = 20261029;
 input double          InpLots            = 0.01;
 input int             InpStartHourGMT    = 7;
-input int             InpEndHourGMT      = 17;
+input int             InpEndHourGMT      = 16;
 input int             InpFridayCloseGMT  = 19;
-input int             InpMaxHoldBars     = 16;
+input int             InpMaxHoldBars     = 12;
 input int             InpMaxSpreadPts    = 40;
 input int             InpMinConfidence   = 70;
-input int             InpMaxTradesPerDay = 3;
+input int             InpMaxTradesPerDay = 5;
 input double          InpMaxDailyLossPct = 2.0;
 input double          InpMaxDrawdownPct  = 10.0;
 input double          InpMaxRiskPct      = 1.0;
 input double          InpSlMinAtr        = 1.0;
-input double          InpSlMaxAtr        = 2.5;
-input double          InpMinRR           = 1.5;
-input double          InpMaxRR           = 3.0;
-input double          InpMaxTpAtr        = 4.0;
+input double          InpSlMaxAtr        = 2.0;
+input double          InpMinRR           = 1.2;
+input double          InpMaxRR           = 2.0;
+input double          InpMaxTpAtr        = 3.0;
 input double          InpMinSlSpreads    = 6.0;
 input double          InpMaxDriftAtr     = 0.3;
 input int             InpSlippagePts     = 30;
 input bool            InpNewsFilter      = true;
 input int             InpNewsMinutes     = 30;
 input int             InpBars            = 100;
-input int             InpHtfBars         = 30;         // closed H1 and H4 bars sent for context
+input int             InpHtfBars         = 30;         // closed M15 and H1 bars sent for context
 
 CTrade trade;
 string g_sym;
@@ -225,8 +225,8 @@ string BuildBody(datetime bar, double bid, double ask, double &atrLast)
       CopyBuffer(hE200, 0, 1, n, e200) != n || CopyBuffer(hRsi, 0, 1, n, rsi) != n ||
       CopyBuffer(hAtr, 0, 1, n, atr) != n) return "";
    int d = (int)SymbolInfoInteger(g_sym, SYMBOL_DIGITS);
-   string h1 = HtfCsv("H1", PERIOD_H1, d), h4 = HtfCsv("H4", PERIOD_H4, d);
-   if(h1 == "" || h4 == "") return "";
+   string m15 = HtfCsv("M15", PERIOD_M15, d), h1 = HtfCsv("H1", PERIOD_H1, d);
+   if(m15 == "" || h1 == "") return "";
    atrLast = atr[n - 1];
    string s = StringFormat("bar=%I64d;sym=%s;tf=%s;bid=%s;ask=%s;atr=%s\n", (long)bar, g_sym,
                            EnumToString(InpTimeframe), DoubleToString(bid, d), DoubleToString(ask, d),
@@ -239,7 +239,7 @@ string BuildBody(datetime bar, double bid, double ask, double &atrLast)
            DoubleToString(e20[i], d) + "," + DoubleToString(e50[i], d) + "," +
            DoubleToString(e200[i], d) + "," + DoubleToString(rsi[i], 1) + "," +
            DoubleToString(atr[i], d) + "\n";
-   return s + h1 + h4;
+   return s + m15 + h1;
 }
 
 bool Post(const string body, string &resp)
