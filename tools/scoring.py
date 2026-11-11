@@ -11,7 +11,7 @@ import json
 import random
 import statistics
 
-TF_SEC = {"PERIOD_M15": 900, "PERIOD_H1": 3600}
+TF_SEC = {"PERIOD_M5": 300, "PERIOD_M15": 900, "PERIOD_H1": 3600}
 
 
 def load_m1(path):
@@ -39,20 +39,24 @@ def simulate(m1, times, bar, buy, entry, spread, sl_dist, rr, hold_sec):
     return ((exit_px - entry) if buy else (entry - exit_px)) / sl_dist, last[0]
 
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+")
     ap.add_argument("--m1", required=True)
     ap.add_argument("--min-conf", type=int, default=70)
     ap.add_argument("--sl-min", type=float, default=1.0)
-    ap.add_argument("--sl-max", type=float, default=2.5)
-    ap.add_argument("--rr-min", type=float, default=1.5)
-    ap.add_argument("--rr-max", type=float, default=3.0)
-    ap.add_argument("--tp-max-atr", type=float, default=4.0)
+    ap.add_argument("--sl-max", type=float, default=2.0)
+    ap.add_argument("--rr-min", type=float, default=1.2)
+    ap.add_argument("--rr-max", type=float, default=2.0)
+    ap.add_argument("--tp-max-atr", type=float, default=3.0)
     ap.add_argument("--min-sl-spreads", type=float, default=6.0)
-    ap.add_argument("--hold-bars", type=int, default=16)
+    ap.add_argument("--hold-bars", type=int, default=12)
     ap.add_argument("--cost", type=float, default=0.0, help="commission per trade, in price units")
-    a = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    a = parse_args(argv)
 
     m1, times = load_m1(a.m1)
     recs = sorted((json.loads(l) for p in a.logs for l in open(p, encoding="utf-8")),

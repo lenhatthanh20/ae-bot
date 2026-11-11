@@ -8,9 +8,10 @@ Windows: MT5 + mt5/AIGold.mq5 --WebRequest (LAN)--> Mac: bridge/server.py (<mac-
          <-- "BUY;1.50;2.00;74;<bar>"  (action; SL in ATR; TP as R:R; confidence; bar echo)
 ```
 
-- EA sends 100 closed M15 bars (OHLC, EMA20/50/200, RSI14, ATR14) plus 30 closed H1 and H4 bars.
-- `bridge/prompt.md`: the model checks 8 angles (trend, structure, levels, EMAs, momentum,
-  volatility, price action, session) and trades only when 5+ agree. Default is NONE.
+- EA sends 100 closed M5 bars (OHLC, EMA20/50/200, RSI14, ATR14) plus 30 closed M15 and H1 bars,
+  once per new M5 bar, 07:00-16:00 GMT.
+- `bridge/prompt.md`: M5 trend-pullback scalp. M15 + H1 bias, pullback to the ema20-ema50 zone,
+  rejection or engulfing trigger, room to the next level. Sideways or unsure → NONE (the default).
 - The EA computes SL/TP prices itself and enforces every risk guard (see [Risk guards](#risk-guards)).
 - `InpDryRun=true` and `InpAllowLive=false` by default.
 - Mac asleep, bridge down or LAN down: `WebRequest` fails, the EA prints `BRIDGE_ERR` and does not trade.
@@ -82,7 +83,7 @@ Windows:
 2. Share the MT5 data folder (File > Open Data Folder, the `MQL5` folder) and mount it on the Mac over SMB.
    Then on the Mac: `export MT5_MQL5=<path-to-MQL5>` and run `scripts/deploy-mt5.sh`.
 3. Compile in MetaEditor (F7). Run `PingTest` with `InpUrl=http://<mac-ip>:18765/health`, then attach `AIGold`
-   to an XAUUSD M15 chart with `InpUrl=http://<mac-ip>:18765/decide`.
+   to an XAUUSD M5 chart with `InpUrl=http://<mac-ip>:18765/decide`.
 4. Never sleep, set Windows Update active hours, add MT5 to Startup, keep time sync on (the EA uses `TimeGMT()`).
 
 ## Scripts
@@ -117,12 +118,12 @@ Windows:
 | 14 | Bridge error, timeout, HTTP ≠ 200, bad format or `bar` echo mismatch → no entry | EA `OnTick` + bridge |
 | 15 | Bar changed or price drifted > 0.3 ATR while waiting for the AI → skip | EA `OnTick` |
 | 16 | Confidence ≥ 70 | EA `Validate` |
-| 17 | SL 1.0-2.5 ATR, RR 1.5-3, TP ≤ 4 ATR, SL ≥ 6× spread | EA `Validate` |
+| 17 | SL 1.0-2.0 ATR, RR 1.2-2, TP ≤ 3 ATR, SL ≥ 6× spread | EA `Validate` |
 | 18 | Broker stops/freeze level | EA `Validate` |
 | 19 | Risk per trade ≤ 1% of balance (`OrderCalcProfit`) | EA `Validate` |
 | 20 | SL/TP required, sent in the same request; prices normalized to tick; lot clamped | EA `Validate` / `Execute` |
 | 21 | Filling mode by symbol, deviation 30 points, no retry | EA `OnInit` / `Execute` |
-| 22 | Time exit (16 bars) and Friday close 19:00 GMT (fixed rules, no AI) | EA `ManagePosition` |
+| 22 | Time exit (12 bars) and Friday close 19:00 GMT (fixed rules, no AI) | EA `ManagePosition` |
 | 23 | Bridge bind is opt-in (`BRIDGE_HOST`, default `127.0.0.1`) + client IP allowlist (`ALLOW_IPS`) | Bridge |
 | 24 | `DAILY_USD_CAP` | Bridge |
 | 25 | `ANTHROPIC_API_KEY` unset, so `claude -p` uses the subscription login; no secrets in repo or logs | `run.sh` |
@@ -148,7 +149,7 @@ Stay on demo until the gate passes.
 - **Phase 2a, EA dry run with `AI_MODE=fake`:** EA prints `DRYRUN`; with the bridge stopped it prints `BRIDGE_ERR`
   and places no order.
 - **Phase 2b, demo orders with `AI_MODE=fake` (3-5 days):** `InpDryRun=false`. Expect orders with SL/TP from the start,
-  `SKIP POSITION`, `TIME_EXIT` after 16 bars, `SKIP TRADES_DAY` after 3 trades, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
+  `SKIP POSITION`, `TIME_EXIT` after 12 bars, `SKIP TRADES_DAY` after 5 trades, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
   Friday close. Restart MT5 mid-bar: no second order in the same bar. Record slippage and every retcode other than 10009.
 - **Phase 3, shadow mode with the real AI (≥ 4 weeks, ≥ 100 scored signals):** freeze `prompt.md`, run `./run.sh`,
   `InpDryRun=true`. Compare models with `tools/compare_models.py` in the first days.

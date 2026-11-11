@@ -1,5 +1,12 @@
 import unittest
 
+import contextlib
+import io
+import json
+import os
+import tempfile
+
+import scoring
 from scoring import simulate
 
 # M1 rows: (time, high, low, close), bid prices
@@ -31,6 +38,28 @@ class Simulate(unittest.TestCase):
     def test_not_enough_data_gives_none(self):
         rows, t = m1([(1000, 101, 99.5, 100.5)])
         self.assertIsNone(simulate(rows, t, BAR, True, 100.0, 0.2, 2.0, 2.0, HOLD))
+
+
+class Main(unittest.TestCase):
+    def test_defaults_match_ea_m5_profile(self):
+        a = scoring.parse_args(["--m1", "x.csv", "log.jsonl"])
+        self.assertEqual((a.sl_min, a.sl_max, a.rr_min, a.rr_max, a.tp_max_atr, a.hold_bars),
+                         (1.0, 2.0, 1.2, 2.0, 3.0, 12))
+
+    def test_scores_m5_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            m1p, logp = os.path.join(d, "m1.csv"), os.path.join(d, "log.jsonl")
+            with open(m1p, "w") as f:
+                f.write("time,high,low,close\n")
+                f.writelines(f"{t},100.1,99.9,100\n" for t in range(0, 7200, 60))
+            rec = {"bar": 0, "tf": "PERIOD_M5", "atr": 1.0, "bid": 100.0, "ask": 100.1,
+                   "decision": {"action": "BUY", "sl_atr": 1.5, "tp_rr": 1.5, "confidence": 80}}
+            with open(logp, "w") as f:
+                f.write(json.dumps(rec) + "\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                scoring.main(["--m1", m1p, logp])
+            self.assertIn("n=1", out.getvalue())
 
 
 if __name__ == "__main__":
