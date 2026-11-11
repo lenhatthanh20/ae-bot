@@ -124,21 +124,19 @@ and a shadow signal without M1 data can never be scored.
 | 8 | GMT session window, no entries on Saturday/Sunday | EA `PreCheck` |
 | 9 | Spread ≤ `InpMaxSpreadPts` | EA `PreCheck` |
 | 10 | HIGH-impact USD news ±30 min; calendar error → no entry | EA `NewsBlackout` |
-| 11 | Trades per day counted from history (not RAM) | EA `TradesToday` |
-| 12 | Daily loss on equity (GV keeps start-of-day equity) | EA `DailyLossHit` |
-| 13 | Kill at 10% drawdown from equity peak (GV keeps the peak) | EA `PreCheck` |
-| 14 | Bridge error, timeout, HTTP ≠ 200, bad format or `bar` echo mismatch → no entry | EA `OnTick` + bridge |
-| 15 | Bar changed or price drifted > 0.3 ATR while waiting for the AI → skip | EA `OnTick` |
-| 16 | Confidence ≥ 70 | EA `Validate` |
-| 17 | SL 1.0-2.0 ATR, RR 1.2-2, TP ≤ 3 ATR, SL ≥ 6× spread | EA `Validate` |
-| 18 | Broker stops/freeze level | EA `Validate` |
-| 19 | Risk per trade ≤ 1% of balance (`OrderCalcProfit`) | EA `Validate` |
-| 20 | SL/TP required, sent in the same request; prices normalized to tick; lot clamped | EA `Validate` / `Execute` |
-| 21 | Filling mode by symbol, deviation 30 points, no retry | EA `OnInit` / `Execute` |
-| 22 | Time exit (12 bars) and Friday close 19:00 GMT (fixed rules, no AI) | EA `ManagePosition` |
-| 23 | Bridge bind is opt-in (`BRIDGE_HOST`, default `127.0.0.1`) + client IP allowlist (`ALLOW_IPS`) | Bridge |
-| 24 | `DAILY_USD_CAP` | Bridge |
-| 25 | `ANTHROPIC_API_KEY` unset, so `claude -p` uses the subscription login; no secrets in repo or logs | `run.sh` |
+| 11 | 4 losing trades in a row today (`InpMaxLossStreak`, from history, survives restart) → no entries until the next server day; no trade-count, daily-loss or drawdown limit | EA `LossStreakToday` |
+| 12 | Bridge error, timeout, HTTP ≠ 200, bad format or `bar` echo mismatch → no entry | EA `OnTick` + bridge |
+| 13 | Bar changed while waiting for the AI, or fill-side price moved > 0.2 SL against us (`InpMaxAdverseSl`) or > 0.5 SL in our favor (`InpMaxFavorSl`) → skip `DRIFT`; checked after `Validate` | EA `OnTick` |
+| 14 | Confidence ≥ 70 | EA `Validate` |
+| 15 | SL 1.0-2.0 ATR, RR 1.2-2, TP ≤ 3 ATR, SL ≥ 6× spread | EA `Validate` |
+| 16 | Broker stops/freeze level | EA `Validate` |
+| 17 | Lots sized so loss at SL ≤ max($10, 1% of balance) (`InpMaxLossUsd`, `InpMaxRiskPct`, `OrderCalcProfit`); min lot still over → `REJECT LOSS_USD` | EA `Validate` |
+| 18 | SL/TP required, sent in the same request; prices normalized to tick; lot clamped | EA `Validate` / `Execute` |
+| 19 | Filling mode by symbol, deviation 30 points, no retry | EA `OnInit` / `Execute` |
+| 20 | Time exit (12 bars) and Friday close 19:00 GMT (fixed rules, no AI) | EA `ManagePosition` |
+| 21 | Bridge bind is opt-in (`BRIDGE_HOST`, default `127.0.0.1`) + client IP allowlist (`ALLOW_IPS`) | Bridge |
+| 22 | `DAILY_USD_CAP` | Bridge |
+| 23 | `ANTHROPIC_API_KEY` unset, so `claude -p` uses the subscription login; no secrets in repo or logs | `run.sh` |
 
 ## Live gate
 
@@ -162,11 +160,11 @@ Stay on demo until the gate passes.
   and places no order.
 - **Stats (Phase 2b onward):** `scripts/stats.sh --html` after `ExportDeals` and `ExportM1`, at least weekly.
 - **Phase 2b, demo orders with `AI_MODE=fake` (3-5 days):** `InpDryRun=false`. Expect orders with SL/TP from the start,
-  `SKIP POSITION`, `TIME_EXIT` after 12 bars, `SKIP TRADES_DAY` after 5 trades, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
+  `SKIP POSITION`, `TIME_EXIT` after 12 bars, `SKIP LOSS_STREAK` after 4 losses in a row, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
   Friday close. Restart MT5 mid-bar: no second order in the same bar. Record slippage and every retcode other than 10009.
 - **Phase 3, shadow mode with the real AI (≥ 4 weeks, ≥ 100 scored signals):** freeze `prompt.md`, run `./run.sh`,
   `InpDryRun=true`. Compare models with `tools/compare_models.py` in the first days.
 - **Phase 4, decision:** run `scripts/score.sh`. FAIL → stop or restart Phase 3 with new rules.
   PASS → check that model cost does not eat the edge at the planned lot size.
-- **Phase 5, live 0.01 lot (only after Phase 4 PASS):** small separate live account, `InpAllowLive=true`,
+- **Phase 5, live with the $10 loss budget (only after Phase 4 PASS):** small separate live account, `InpAllowLive=true`,
   `InpDryRun=false`, all guards on. Compare live with shadow weekly; stop if live falls below the shadow CI.

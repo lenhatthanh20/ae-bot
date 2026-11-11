@@ -11,16 +11,14 @@ input int             InpTimeoutMs       = 60000;
 input bool            InpDryRun          = true;
 input bool            InpAllowLive       = false;
 input long            InpMagic           = 20261029;
-input double          InpLots            = 0.01;
+input double          InpMaxLossUsd      = 10.0;       // loss budget = max(this, InpMaxRiskPct of balance)
 input int             InpStartHourGMT    = 7;
 input int             InpEndHourGMT      = 16;
 input int             InpFridayCloseGMT  = 19;
 input int             InpMaxHoldBars     = 12;
 input int             InpMaxSpreadPts    = 40;
 input int             InpMinConfidence   = 70;
-input int             InpMaxTradesPerDay = 5;
-input double          InpMaxDailyLossPct = 2.0;
-input double          InpMaxDrawdownPct  = 10.0;
+input int             InpMaxLossStreak   = 4;          // losing exits in a row today
 input double          InpMaxRiskPct      = 1.0;
 input double          InpSlMinAtr        = 1.0;
 input double          InpSlMaxAtr        = 2.0;
@@ -28,7 +26,8 @@ input double          InpMinRR           = 1.2;
 input double          InpMaxRR           = 2.0;
 input double          InpMaxTpAtr        = 3.0;
 input double          InpMinSlSpreads    = 6.0;
-input double          InpMaxDriftAtr     = 0.3;
+input double          InpMaxAdverseSl    = 0.2;        // drift limits in SL units, fill side
+input double          InpMaxFavorSl      = 0.5;
 input int             InpSlippagePts     = 30;
 input bool            InpNewsFilter      = true;
 input int             InpNewsMinutes     = 30;
@@ -39,7 +38,7 @@ CTrade trade;
 string g_sym;
 int    hE20 = INVALID_HANDLE, hE50 = INVALID_HANDLE, hE200 = INVALID_HANDLE;
 int    hRsi = INVALID_HANDLE, hAtr = INVALID_HANDLE;
-string g_gvBar, g_gvDay, g_gvEq, g_gvPeak;
+string g_gvBar;
 
 int OnInit()
 {
@@ -70,8 +69,7 @@ int OnInit()
    trade.SetDeviationInPoints((ulong)InpSlippagePts);
    trade.SetTypeFillingBySymbol(g_sym);
 
-   string p = "AIGold_" + IntegerToString(InpMagic) + "_";
-   g_gvBar = p + "lastbar"; g_gvDay = p + "day"; g_gvEq = p + "dayeq"; g_gvPeak = p + "peak";
+   g_gvBar = "AIGold_" + IntegerToString(InpMagic) + "_lastbar";
 
    PrintFormat("%s digits=%d point=%g tick=%g contract=%g stops=%d freeze=%d spread_now=%d pts dryrun=%s",
                g_sym, (int)SymbolInfoInteger(g_sym, SYMBOL_DIGITS), SymbolInfoDouble(g_sym, SYMBOL_POINT),
@@ -117,18 +115,25 @@ void OnTick()
    // the AI call may have taken up to 60 s: re-check the world
    if(iTime(g_sym, InpTimeframe, 0) != bar) { Print("SKIP BAR_CHANGED"); LogEvent(bar, "SKIP", "BAR_CHANGED"); return; }
    double bid2 = SymbolInfoDouble(g_sym, SYMBOL_BID), ask2 = SymbolInfoDouble(g_sym, SYMBOL_ASK);
-   if(MathAbs((bid2 + ask2) - (bid + ask)) / 2.0 > InpMaxDriftAtr * atr) { Print("SKIP DRIFT"); LogEvent(bar, "SKIP", "DRIFT"); return; }
-
-   double sl = 0, tp = 0, lots = 0;
+   double sl = 0, tp = 0, lots = 0, loss = 0;
+   double slAtr = StringToDouble(p[1]);
    int conf = (int)StringToInteger(p[3]);
-   why = Validate(act, StringToDouble(p[1]), StringToDouble(p[2]), conf, atr, bid2, ask2, sl, tp, lots);
+   why = Validate(act, slAtr, StringToDouble(p[2]), conf, atr, bid2, ask2, sl, tp, lots, loss);
    if(why != "")
    {
       PrintFormat("REJECT %s %s conf=%d", act, why, conf);
       LogEvent(bar, "REJECT", StringFormat("%s %s conf=%d", why, act, conf));
       return;
    }
-   Execute(bar, act, lots, sl, tp, conf);
+   // fill-side move since the AI saw the price, in units of its stop; > 0 = against us
+   double drift = (act == "BUY" ? ask2 - ask : bid - bid2) / (slAtr * atr);
+   if(drift > InpMaxAdverseSl || drift < -InpMaxFavorSl)
+   {
+      string d = StringFormat("DRIFT %s drift=%.2f", act, drift);
+      PrintFormat("SKIP %s", d); LogEvent(bar, "SKIP", d);
+      return;
+   }
+   Execute(bar, act, lots, sl, tp, conf, drift, loss);
 }
 
 // One CSV row per outcome, for tools/stats.py. Detail must not hold commas.
@@ -148,10 +153,6 @@ string PreCheck()
 {
    if(!InpDryRun && (!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)))
       return "ALGO_OFF";
-   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
-   double peak = MathMax(GlobalVariableGet(g_gvPeak), eq);
-   GlobalVariableSet(g_gvPeak, peak);
-   if(eq <= peak * (1.0 - InpMaxDrawdownPct / 100.0)) return "MAX_DD";   // reset the GV by hand (F3)
    if(HasPosition()) return "POSITION";
    MqlDateTime g;
    TimeToStruct(TimeGMT(), g);
@@ -159,8 +160,7 @@ string PreCheck()
       return "HOURS";
    double spreadPts = (SymbolInfoDouble(g_sym, SYMBOL_ASK) - SymbolInfoDouble(g_sym, SYMBOL_BID)) / SymbolInfoDouble(g_sym, SYMBOL_POINT);
    if(spreadPts > InpMaxSpreadPts) return "SPREAD";
-   if(TradesToday() >= InpMaxTradesPerDay) return "TRADES_DAY";
-   if(DailyLossHit()) return "DAILY_LOSS";
+   if(LossStreakToday() >= InpMaxLossStreak) return "LOSS_STREAK";
    if(NewsBlackout()) return "NEWS";
    return "";
 }
@@ -176,29 +176,23 @@ bool HasPosition()
    return false;
 }
 
-int TradesToday()
+// Losing exits in a row today, newest first. A win or breakeven ends the streak.
+int LossStreakToday()
 {
    if(!HistorySelect(iTime(g_sym, PERIOD_D1, 0), TimeCurrent() + 60)) return 999;   // fail safe: block
    int n = 0;
    for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
    {
       ulong t = HistoryDealGetTicket(i);
-      if(HistoryDealGetInteger(t, DEAL_MAGIC) == InpMagic &&
-         HistoryDealGetString(t, DEAL_SYMBOL) == g_sym &&
-         HistoryDealGetInteger(t, DEAL_ENTRY) == DEAL_ENTRY_IN) n++;
+      long entry = HistoryDealGetInteger(t, DEAL_ENTRY);
+      if(HistoryDealGetInteger(t, DEAL_MAGIC) != InpMagic || HistoryDealGetString(t, DEAL_SYMBOL) != g_sym ||
+         (entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)) continue;
+      double res = HistoryDealGetDouble(t, DEAL_PROFIT) + HistoryDealGetDouble(t, DEAL_SWAP) +
+                   HistoryDealGetDouble(t, DEAL_COMMISSION);
+      if(res >= 0) break;
+      n++;
    }
    return n;
-}
-
-bool DailyLossHit()
-{
-   datetime day = iTime(g_sym, PERIOD_D1, 0);
-   if((datetime)(long)GlobalVariableGet(g_gvDay) != day)
-   {
-      GlobalVariableSet(g_gvDay, (double)day);
-      GlobalVariableSet(g_gvEq, AccountInfoDouble(ACCOUNT_EQUITY));
-   }
-   return AccountInfoDouble(ACCOUNT_EQUITY) <= GlobalVariableGet(g_gvEq) * (1.0 - InpMaxDailyLossPct / 100.0);
 }
 
 bool NewsBlackout()
@@ -297,7 +291,7 @@ double NormLots(double v)
 }
 
 string Validate(const string act, double slAtr, double rr, int conf, double atr,
-                double bid, double ask, double &sl, double &tp, double &lots)
+                double bid, double ask, double &sl, double &tp, double &lots, double &loss)
 {
    if(!MathIsValidNumber(slAtr) || !MathIsValidNumber(rr)) return "BAD_NUM";
    if(conf < InpMinConfidence) return "CONF";
@@ -318,22 +312,27 @@ string Validate(const string act, double slAtr, double rr, int conf, double atr,
 
    sl   = NormPrice(buy ? entry - slDist : entry + slDist);
    tp   = NormPrice(buy ? entry + tpDist : entry - tpDist);
-   lots = NormLots(InpLots);
 
+   // size lots so the loss at SL fits the budget; NormLots may raise to min lot, so check again
+   double budget = MathMax(InpMaxLossUsd, AccountInfoDouble(ACCOUNT_BALANCE) * InpMaxRiskPct / 100.0);
+   ENUM_ORDER_TYPE type = buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    double pl = 0;
-   if(!OrderCalcProfit(buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL, g_sym, lots, entry, sl, pl)) return "CALC";
-   if(-pl > AccountInfoDouble(ACCOUNT_BALANCE) * InpMaxRiskPct / 100.0) return "RISK";
+   if(!OrderCalcProfit(type, g_sym, 1.0, entry, sl, pl) || pl >= 0) return "CALC";
+   lots = NormLots(budget / -pl);
+   if(!OrderCalcProfit(type, g_sym, lots, entry, sl, pl)) return "CALC";
+   loss = -pl;
+   if(loss > budget) return "LOSS_USD";
    return "";
 }
 
-void Execute(datetime bar, const string act, double lots, double sl, double tp, int conf)
+void Execute(datetime bar, const string act, double lots, double sl, double tp, int conf, double drift, double loss)
 {
    int d = (int)SymbolInfoInteger(g_sym, SYMBOL_DIGITS);
+   string extra = StringFormat("drift=%.2f lots=%.2f loss=%.2f", drift, lots, loss);
    if(InpDryRun)
    {
-      PrintFormat("DRYRUN %s lots=%.2f sl=%s tp=%s conf=%d", act, lots,
-                  DoubleToString(sl, d), DoubleToString(tp, d), conf);
-      LogEvent(bar, "DRYRUN", StringFormat("%s conf=%d", act, conf));
+      PrintFormat("DRYRUN %s sl=%s tp=%s conf=%d %s", act, DoubleToString(sl, d), DoubleToString(tp, d), conf, extra);
+      LogEvent(bar, "DRYRUN", StringFormat("%s conf=%d %s", act, conf, extra));
       return;
    }
    bool ok = (act == "BUY") ? trade.Buy(lots, g_sym, 0.0, sl, tp, "AIGold")
@@ -344,8 +343,8 @@ void Execute(datetime bar, const string act, double lots, double sl, double tp, 
                DoubleToString(trade.RequestPrice(), d), DoubleToString(trade.ResultPrice(), d),
                DoubleToString(sl, d), DoubleToString(tp, d));
    bool done = ok && (rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_PLACED);
-   LogEvent(bar, "ORDER", StringFormat("%s %s rc=%u fill=%s conf=%d", done ? "ok" : "fail", act, rc,
-                                       DoubleToString(trade.ResultPrice(), d), conf));
+   LogEvent(bar, "ORDER", StringFormat("%s %s rc=%u fill=%s conf=%d %s", done ? "ok" : "fail", act, rc,
+                                       DoubleToString(trade.ResultPrice(), d), conf, extra));
    if(!done)
       Print("ORDER_FAIL: no retry, next chance is the next bar");
 }
