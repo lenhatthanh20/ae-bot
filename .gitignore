@@ -3,3 +3,4 @@ HALT
 .venv/
 bridge/empty/
 __pycache__/
+local/

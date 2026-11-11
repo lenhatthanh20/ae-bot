@@ -2,7 +2,10 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 import server
@@ -82,6 +85,53 @@ class AskCli(unittest.TestCase):
     def test_nonzero_exit_raises_with_stderr(self):
         with self.assertRaisesRegex(RuntimeError, "not logged in"):
             self.run_with(subprocess.CompletedProcess([], 1, "", "not logged in"))
+
+
+class ClientAllowed(unittest.TestCase):
+    def test_default_allows_localhost_only(self):
+        self.assertEqual(server.ALLOW_IPS, {"127.0.0.1"})
+        self.assertTrue(server.client_allowed("127.0.0.1"))
+        self.assertFalse(server.client_allowed("192.0.2.10"))
+
+    def test_lan_list(self):
+        with mock.patch.object(server, "ALLOW_IPS", server.parse_ips(" 127.0.0.1, 192.0.2.10 ,")):
+            self.assertTrue(server.client_allowed("192.0.2.10"))
+            self.assertTrue(server.client_allowed("127.0.0.1"))
+            self.assertFalse(server.client_allowed("192.0.2.11"))
+            self.assertFalse(server.client_allowed(""))
+
+
+class HandlerAllowlist(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        server.LOG_DIR = pathlib.Path(self.tmp.name) / "logs"
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.httpd.server_port}"
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.tmp.cleanup()
+
+    def call(self, path, body=None):
+        try:
+            with urllib.request.urlopen(self.url + path, data=body, timeout=5) as r:
+                return r.status, r.read().decode().strip()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode().strip()
+
+    def test_allowed_client_gets_answer(self):
+        self.assertEqual(self.call("/health"), (200, "ok"))
+
+    def test_rejected_client_gets_403_without_work(self):
+        asked = mock.Mock(side_effect=AssertionError("ask called"))
+        with mock.patch.object(server, "ALLOW_IPS", {"192.0.2.10"}), \
+             mock.patch.dict(server.ASKERS, {server.MODE: asked}):
+            self.assertEqual(self.call("/health")[0], 403)
+            self.assertEqual(self.call("/decide", BODY.encode())[0], 403)
+        asked.assert_not_called()
+        self.assertFalse(server.LOG_DIR.exists())
 
 
 if __name__ == "__main__":
