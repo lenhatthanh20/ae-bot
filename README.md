@@ -10,8 +10,10 @@ Windows: MT5 + mt5/AIGold.mq5 --WebRequest (LAN)--> Mac: bridge/server.py (<mac-
 
 - EA sends 100 closed M5 bars (OHLC, EMA20/50/200, RSI14, ATR14) plus 30 closed M15 and H1 bars,
   once per new M5 bar, 07:00-16:00 GMT.
-- `bridge/prompt.md`: M5 trend-pullback scalp. M15 + H1 bias, pullback to the ema20-ema50 zone,
-  rejection or engulfing trigger, room to the next level. Sideways or unsure → NONE (the default).
+- `bridge/prompt.md`: M5 trend-pullback scalp, every rule a number test on the rows. Stacked EMAs
+  (ema20 > ema50 > ema200) with M15 + H1 agreeing, pullback to ema20, strong close back above it,
+  vetoes for stretched price, volatility jumps and no room. Stop from a recipe (1.0-2.0 ATR), fixed
+  R:R 1.2, confidence = 50 + 10 per extra that holds (5 extras). Any failed test → NONE (the default).
 - The EA computes SL/TP prices itself and enforces every risk guard (see [Risk guards](#risk-guards)).
 - `InpDryRun=true` and `InpAllowLive=false` by default.
 - Mac asleep, bridge down or LAN down: `WebRequest` fails, the EA prints `BRIDGE_ERR` and does not trade.
