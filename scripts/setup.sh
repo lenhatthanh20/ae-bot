@@ -1,7 +1,6 @@
 #!/bin/bash
-# One-time setup: Python venv and Claude login check.
+# One-time setup: Python venv and Claude login check. Downloads nothing.
 set -eu
 cd "$(dirname "$0")/.."
-command -v uv >/dev/null || brew install uv
-[ -x .venv/bin/python ] || uv venv --python 3.12
+[ -x .venv/bin/python ] || python3 -m venv .venv
 claude auth status

@@ -14,42 +14,88 @@ Windows: MT5 + mt5/AIGold.mq5 --WebRequest (LAN)--> Mac: bridge/server.py (<mac-
   (ema20 > ema50 > ema200) with M15 + H1 agreeing, pullback to ema20, strong close back above it,
   vetoes for stretched price, volatility jumps and no room. Stop from a recipe (1.0-2.0 ATR), fixed
   R:R 1.2, confidence = 50 + 10 per extra that holds (5 extras). Any failed test → NONE (the default).
-- The EA computes SL/TP prices itself and enforces every risk guard (see [Risk guards](#risk-guards)).
-- `InpDryRun=true` and `InpAllowLive=false` by default.
-- Mac asleep, bridge down or LAN down: `WebRequest` fails, the EA prints `BRIDGE_ERR` and does not trade.
-  Open positions keep their broker-side SL/TP; time exit and Friday close run in the EA.
+- The EA computes SL/TP prices itself and enforces every risk guard. Mac asleep, bridge down or LAN down: it prints
+  `BRIDGE_ERR` and does not trade; open positions keep their broker-side SL/TP, time exit and Friday close.
 
-## Layout
+## What you need
 
-| Path | What |
-|---|---|
-| `mt5/AIGold.mq5` | Expert Advisor |
-| `mt5/PingTest.mq5` | Phase 0 check: WebRequest from Windows to the Mac bridge + Calendar |
-| `mt5/ExportM1.mq5` | Exports M1 bars for scoring |
-| `mt5/ExportDeals.mq5` | Exports closed positions of the EA magic (with SL/TP/EXPERT close reason) for stats |
-| `bridge/server.py` | Bridge, `AI_MODE=cli\|fake` |
-| `bridge/prompt.md` | System prompt |
-| `tools/scoring.py` | Offline scoring of shadow-mode decisions |
-| `tools/stats.py` | Statistics report: prompts, decisions, EA funnel, real and shadow results, loss analysis |
-| `tools/stats_report.html` | HTML template for `stats.py --html` |
-| `tools/compare_models.py` | Same payloads on Haiku/Sonnet/Opus |
-| `run.sh` | Starts the bridge with `caffeinate` |
+Mac with `python3`, the `claude` CLI logged in and `jq`. Windows with MetaTrader 5 and a broker account (demo first).
+Both on one subnet with fixed IPs, written here as `<mac-ip>` and `<windows-ip>`. Run the steps in order.
 
-## Quick start (macOS)
+## Step 1: Mac setup
 
 ```bash
-brew install uv
-uv venv --python 3.12 && uv pip install -r requirements.txt
-
-(cd bridge && ../.venv/bin/python -m unittest -v)
-(cd tools && ../.venv/bin/python -m unittest -v)
-
-AI_MODE=fake ./run.sh     # EA tests without tokens, localhost only
-./run.sh                  # claude -p, subscription login
-touch HALT                # kill switch: bridge answers NONE
+scripts/setup.sh                                   # .venv from the local python3 + claude login check
+(cd bridge && ../.venv/bin/python -m unittest -v)  # expected: OK
+(cd tools && ../.venv/bin/python -m unittest -v)   # expected: OK
+scripts/smoke.sh fake                              # expected: every line starts with PASS
 ```
 
-## Bridge environment
+## Step 2: Mac bridge on the LAN
+
+```bash
+# first: System Settings > Network > Firewall, allow incoming connections for .venv/bin/python
+BRIDGE_HOST=0.0.0.0 ALLOW_IPS=127.0.0.1,<windows-ip> ./run.sh
+curl http://127.0.0.1:18765/health                 # from a second terminal
+```
+
+Expected: `ok`. Keep the Mac awake: AC power, lid open. To test `http://<mac-ip>:18765/health` from the
+Mac itself, add `<mac-ip>` to `ALLOW_IPS`; otherwise it answers 403.
+
+## Step 3: Windows MT5
+
+1. Tools > Options > Expert Advisors: allow algo trading; allow WebRequest for `http://<mac-ip>:18765`.
+2. File > Open Data Folder: share the `MQL5` folder.
+3. On the Mac: mount the share over SMB, `export MT5_MQL5=<path-to-MQL5>`, run `scripts/deploy-mt5.sh` (lists 4 files).
+4. In MetaEditor, compile `AIGold`, `PingTest`, `ExportM1` and `ExportDeals` with F7. Expected: 0 errors.
+
+## Step 4: Link check
+
+Run the `PingTest` script with `InpUrl=http://<mac-ip>:18765/health`. Expected in the Experts tab:
+`WebRequest code=200` and `Calendar ok=true values>0` (no calendar → `InpNewsFilter=false`, demo only).
+
+## Step 5: Attach the EA (dry run)
+
+Attach `AIGold` to an XAUUSD M5 chart with `InpUrl=http://<mac-ip>:18765/decide`. Keep the defaults
+`InpDryRun=true` (no orders) and `InpAllowLive=false` (the EA refuses to start on a live account).
+Expected: `DRYRUN` or `AI NONE` lines, at most one per M5 bar. Stop the bridge: `BRIDGE_ERR`, no order.
+
+## Step 6: Real orders
+
+- Demo account: set `InpDryRun=false`. Expect orders with SL/TP (loss at SL ≤ max($10, 1% of balance)), `SKIP POSITION`,
+  `TIME_EXIT` after 12 bars, `SKIP LOSS_STREAK` after 4 losses in a row today, `SKIP ALGO_OFF` with Algo Trading off.
+- Live account, only after `scripts/score.sh` prints `GATE: PASS` on demo data: `InpAllowLive=true`, small separate account.
+- Gate: n ≥ 100 signals, mean > +0.15R after costs, lower 95% CI > 0, p < 0.05 against random direction,
+  max drawdown < 10R, one prompt and model for the whole sample. `GATE: FAIL`: change the rules, start a new sample.
+
+## Stop it
+
+- `touch HALT` on the Mac: the bridge answers NONE. Delete the file to resume.
+- MT5 **Algo Trading** button off: the EA opens nothing.
+- Ctrl-C on `run.sh`: the EA prints `BRIDGE_ERR` and does not trade.
+
+## Weekly
+
+Run the `ExportM1` and `ExportDeals` scripts in MT5, then `scripts/stats.sh --html` (report in `local/`) and
+`scripts/score.sh` on the Mac. The broker drops old M1 bars, and a signal without M1 data can never be scored.
+
+## Windows upkeep
+
+Never sleep, set Windows Update active hours, add MT5 to Startup, keep time sync on.
+
+## If it fails
+
+| You see | Cause | Fix |
+|---|---|---|
+| `BRIDGE_ERR` | Bridge down, Mac asleep or LAN down | Start `run.sh`, wake the Mac, repeat step 4 |
+| HTTP 403 | Client IP not in `ALLOW_IPS` | Add `<windows-ip>` and restart `run.sh` |
+| WebRequest error in `PingTest` | URL not in the MT5 whitelist | Step 3, item 1 |
+| `port ... is busy` | Another process on the smoke port | `PORT=18767 scripts/smoke.sh fake` |
+| `MT5_MQL5 is not set` | Variable missing in this shell | Step 3, item 3 |
+
+## Reference
+
+Agent rules: [AGENTS.md](AGENTS.md). No step here downloads a package; agents must not either.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -63,110 +109,11 @@ touch HALT                # kill switch: bridge answers NONE
 | `CLAUDE_BIN` | `claude` | Absolute path if `claude` is not on `PATH` |
 | `FAKE_ACTION` | `BUY` | Fake mode only: `BUY` \| `SELL` \| `NONE` |
 
-## Two-machine LAN setup
-
-Both machines must be in the same subnet. Use fixed IPs (`<mac-ip>`, `<windows-ip>`), outside the router DHCP pool
-or as DHCP reservations.
-
-Mac:
-1. Fixed IP on the LAN interface. Do not use VM interfaces (colima, Docker).
-2. System Settings > Network > Firewall: allow incoming connections for `.venv/bin/python`.
-3. Start the bridge on the LAN:
-   ```bash
-   BRIDGE_HOST=0.0.0.0 ALLOW_IPS=127.0.0.1,<windows-ip> ./run.sh
-   curl http://127.0.0.1:18765/health   # ok
-   ```
-   To test the LAN address from the Mac itself, add `<mac-ip>` to `ALLOW_IPS`; otherwise it answers 403:
-   ```bash
-   BRIDGE_HOST=0.0.0.0 ALLOW_IPS=127.0.0.1,<mac-ip>,<windows-ip> ./run.sh
-   curl http://<mac-ip>:18765/health   # ok
-   ```
-4. Keep it awake: AC power, lid open. `run.sh` runs `caffeinate -is`.
-
-Windows:
-1. MT5 Tools > Options > Expert Advisors: allow algo trading, allow WebRequest for `http://<mac-ip>:18765`.
-2. Share the MT5 data folder (File > Open Data Folder, the `MQL5` folder) and mount it on the Mac over SMB.
-   Then on the Mac: `export MT5_MQL5=<path-to-MQL5>` and run `scripts/deploy-mt5.sh`.
-3. Compile in MetaEditor (F7). Run `PingTest` with `InpUrl=http://<mac-ip>:18765/health`, then attach `AIGold`
-   to an XAUUSD M5 chart with `InpUrl=http://<mac-ip>:18765/decide`.
-4. Never sleep, set Windows Update active hours, add MT5 to Startup, keep time sync on (the EA uses `TimeGMT()`).
-
-## Scripts
-
 | Script | What |
 |---|---|
-| `scripts/setup.sh` | uv venv + `claude auth status` |
+| `scripts/setup.sh` | Python venv + `claude auth status` |
 | `scripts/smoke.sh fake` | Bridge end to end on `127.0.0.1`, no tokens (also runs in CI) |
 | `scripts/smoke.sh cli` | One real `claude -p` call: checks structured output, latency, HALT |
 | `scripts/deploy-mt5.sh` | Copies `mt5/*.mq5` into `$MT5_MQL5` (required); compile with F7 after |
 | `scripts/score.sh [symbol]` | `tools/scoring.py` on `logs/` with `$MT5_MQL5/Files/m1_<symbol>.csv` from `ExportM1` |
-| `scripts/stats.sh [args]` | `tools/stats.py` on `logs/` and `$MT5_MQL5/Files` (events log, `deals_<symbol>.csv`, `m1_<symbol>.csv`); `SYMBOL` env, default `XAUUSD` |
-
-`stats.sh` examples: `--html` (writes `local/stats-<date>.html` and opens it), `--json out.json`,
-`--since 2026-11-01 --until 2026-11-30`, `--setup <prompt_sha>` (default: latest prompt/model), `--setup all`.
-Missing input files only hide their sections. The funnel needs the EA events log
-(`MQL5/Files/aigold_events_<magic>.csv`, written by the EA since this version; older bars are not in it).
-
-Run `ExportM1` and `ExportDeals` at least once a week: the broker keeps M1 bars only for a limited time,
-and a shadow signal without M1 data can never be scored.
-
-`smoke.sh` uses its own port (18766), log dir and HALT file, so it can run next to a live bridge.
-
-## Risk guards
-
-| # | Guard | Where |
-|---|---|---|
-| 1 | Block live accounts (`InpAllowLive=false` → INIT_FAILED) | EA `OnInit` |
-| 2 | Kill switch: MT5 **Algo Trading** button (EA checks `TERMINAL_TRADE_ALLOWED`) | MT5 + EA `PreCheck` |
-| 3 | Kill switch: `touch HALT` → bridge always answers NONE | Bridge `decide` |
-| 4 | `InpDryRun=true` by default | EA `Execute` |
-| 5 | At most one AI call per bar, also after restart (GV `lastbar` written before the call + `GlobalVariablesFlush`) | EA `OnTick` |
-| 6 | Skip the bar if it opened more than 60 s ago | EA `OnTick` |
-| 7 | One position at a time (symbol + magic; on netting accounts any position on the symbol) | EA `PreCheck` |
-| 8 | GMT session window, no entries on Saturday/Sunday | EA `PreCheck` |
-| 9 | Spread ≤ `InpMaxSpreadPts` | EA `PreCheck` |
-| 10 | HIGH-impact USD news ±30 min; calendar error → no entry | EA `NewsBlackout` |
-| 11 | 4 losing trades in a row today (`InpMaxLossStreak`, from history, survives restart) → no entries until the next server day; no trade-count, daily-loss or drawdown limit | EA `LossStreakToday` |
-| 12 | Bridge error, timeout, HTTP ≠ 200, bad format or `bar` echo mismatch → no entry | EA `OnTick` + bridge |
-| 13 | Bar changed while waiting for the AI, or fill-side price moved > 0.2 SL against us (`InpMaxAdverseSl`) or > 0.5 SL in our favor (`InpMaxFavorSl`) → skip `DRIFT`; checked after `Validate` | EA `OnTick` |
-| 14 | Confidence ≥ 70 | EA `Validate` |
-| 15 | SL 1.0-2.0 ATR, RR 1.2-2, TP ≤ 3 ATR, SL ≥ 6× spread | EA `Validate` |
-| 16 | Broker stops/freeze level | EA `Validate` |
-| 17 | Lots sized so loss at SL ≤ max($10, 1% of balance) (`InpMaxLossUsd`, `InpMaxRiskPct`, `OrderCalcProfit`); min lot still over → `REJECT LOSS_USD` | EA `Validate` |
-| 18 | SL/TP required, sent in the same request; prices normalized to tick; lot clamped | EA `Validate` / `Execute` |
-| 19 | Filling mode by symbol, deviation 30 points, no retry | EA `OnInit` / `Execute` |
-| 20 | Time exit (12 bars) and Friday close 19:00 GMT (fixed rules, no AI) | EA `ManagePosition` |
-| 21 | Bridge bind is opt-in (`BRIDGE_HOST`, default `127.0.0.1`) + client IP allowlist (`ALLOW_IPS`) | Bridge |
-| 22 | `DAILY_USD_CAP` | Bridge |
-| 23 | `ANTHROPIC_API_KEY` unset, so `claude -p` uses the subscription login; no secrets in repo or logs | `run.sh` |
-
-## Live gate
-
-Forward data only: replaying history has look-ahead (the model has seen past gold prices) and the
-Strategy Tester cannot run WebRequest. Freeze `prompt.md`, the model and `InpMinConfidence` for the whole sample.
-
-Gate, fixed in advance: n ≥ 100, mean > +0.15R after costs, lower 95% CI > 0, p < 0.05 against random
-direction, max drawdown < 10R, one prompt/model only. `tools/scoring.py` prints `GATE: PASS` or `GATE: FAIL`.
-A FAIL means stop or rewrite the rules and start a new sample; never tune on the old sample and re-score it.
-
-## Rollout
-
-Stay on demo until the gate passes.
-
-- **Phase 0, setup gate:** broker demo account, exact symbol name, WebRequest whitelist on Windows.
-  `PingTest` against `http://<mac-ip>:18765/health` must print `WebRequest code=200` and `Calendar ok=true values>0`
-  (no calendar → `InpNewsFilter=false`, demo only). Note the server GMT offset.
-- **Phase 1, bridge:** unit tests pass, `scripts/smoke.sh fake` passes, logs have `prompt_sha`, `usage`, `latency_ms`,
-  `HALT` gives NONE.
-- **Phase 2a, EA dry run with `AI_MODE=fake`:** EA prints `DRYRUN`; with the bridge stopped it prints `BRIDGE_ERR`
-  and places no order.
-- **Stats (Phase 2b onward):** `scripts/stats.sh --html` after `ExportDeals` and `ExportM1`, at least weekly.
-- **Phase 2b, demo orders with `AI_MODE=fake` (3-5 days):** `InpDryRun=false`. Expect orders with SL/TP from the start,
-  `SKIP POSITION`, `TIME_EXIT` after 12 bars, `SKIP LOSS_STREAK` after 4 losses in a row, `SKIP ALGO_OFF`, `AI NONE` with `HALT`,
-  Friday close. Restart MT5 mid-bar: no second order in the same bar. Record slippage and every retcode other than 10009.
-- **Phase 3, shadow mode with the real AI (≥ 4 weeks, ≥ 100 scored signals):** freeze `prompt.md`, run `./run.sh`,
-  `InpDryRun=true`. Compare models with `tools/compare_models.py` in the first days.
-- **Phase 4, decision:** run `scripts/score.sh`. FAIL → stop or restart Phase 3 with new rules.
-  PASS → check that model cost does not eat the edge at the planned lot size.
-- **Phase 5, live with the $10 loss budget (only after Phase 4 PASS):** small separate live account, `InpAllowLive=true`,
-  `InpDryRun=false`, all guards on. Compare live with shadow weekly; stop if live falls below the shadow CI.
+| `scripts/stats.sh [args]` | `tools/stats.py` on `logs/` and `$MT5_MQL5/Files`; `SYMBOL` env, default `XAUUSD`; e.g. `--since 2026-11-01` |
